@@ -1,0 +1,79 @@
+server:
+  port: 8080
+  tomcat:
+    max-http-form-post-size: 50MB
+
+logging:
+  level:
+    com.sheyingtong.service.PhotographyTools: DEBUG
+    com.sheyingtong.service.ChatService: DEBUG
+
+spring:
+  application:
+    name: sheyingtong
+  
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/sheyingtong?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:}
+    password: ${DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    # ⚠️ 关键：Hibernate ddl-auto=update 建表完成后再执行 data.sql
+    #   没有这行的话 data.sql 会先跑 → 表不存在 → 启动报错
+    defer-datasource-initialization: true
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.MySQLDialect
+        connection:
+          characterEncoding: utf8
+          useUnicode: true
+  
+  # ---------- Spring Boot SQL 种子数据初始化配置 ----------
+  # data.sql 位置：backend/src/main/resources/data.sql
+  # mode=always：每次启动都执行（data.sql 内用 INSERT IGNORE / ON DUPLICATE KEY UPDATE 保证幂等）
+  sql:
+    init:
+      mode: always
+      data-locations: classpath:data.sql
+      # data.sql 执行失败直接让应用启动终止，避免 silent failure（比如表名写错了也不知道）
+      continue-on-error: false
+  
+  http:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+  
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+jwt:
+  secret: ${JWT_SECRET:}
+  expiration: ${JWT_EXPIRATION:86400000}
+
+openai:
+  api-key: ${OPENAI_API_KEY:your-openai-api-key}
+  base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+
+qwen:
+  api-key: ${QWEN_API_KEY:}
+  model: qwen-turbo
+  vl-model: qwen-vl-plus
+  timeout: 180000
+
+chroma:
+  host: localhost
+  port: 8000
+  collection-name: photography_dictionary

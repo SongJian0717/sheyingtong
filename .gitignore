@@ -1,0 +1,117 @@
+# ============================================================
+#  摄影通 · 项目级 Git 忽略规则
+#  目标：只保留"源码+配置+文档"
+#  注意：Git .gitignore 不支持 pattern 同行后面写 # 注释！
+#        所有 # 注释必须单独占一行，pattern 行保持干净。
+# ============================================================
+
+# ---------- Java / Spring Boot 编译产物 ----------
+backend/target/
+backend/build/
+backend/out/
+backend/dev/
+backend/*.iml
+*.class
+
+# ---------- HuggingFace / 本地大模型权重（几百MB~几GB，绝对不要上传！）----------
+# 新机器首次启动 vector-service 会自动从 HuggingFace 下载，无需 Git 管理
+vector-service/models/
+models/
+
+# ---------- Maven wrapper JAR（极少需要）----------
+backend/.mvn/wrapper/maven-wrapper.jar
+
+# ---------- Node / Vue / Vite 依赖与构建产物 ----------
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+frontend/eslintcache
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# ---------- 前端包管理器日志 ----------
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- Python 缓存与虚拟环境 ----------
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.python-version
+venv/
+env/
+.venv/
+ENV/
+
+# ---------- 运行时数据：最关键！隐私/个人数据绝不要传 ----------
+# 用户上传的头像与照片（绝对不要开源！）
+backend/uploads/
+
+# ChromaDB 向量数据库 sqlite3 + 索引 bin 文件
+chroma-data/
+
+# 日志
+*.log
+logs/
+backend/logs/
+hs_err_pid*
+replay_pid*
+
+# ---------- 敏感信息：本地覆盖配置 ----------
+.env
+.env.*
+*.env.local
+
+# 模板文件（留档的示例 env 模板，如果有的话可以保留）
+# !.env.example
+
+# ---------- IDE：JetBrains IntelliJ IDEA ----------
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# ---------- IDE：Visual Studio Code ----------
+.vscode/
+
+# 如需保留推荐插件清单，可单独放开这两行（默认关，避免个人设置混进仓库）
+# !.vscode/extensions.json
+# !.vscode/settings.json.template
+
+# ---------- 系统 / 编辑器杂项 ----------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Vim 交换文件等
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ---------- 临时与调试 ----------
+tmp/
+temp/
+*.tmp
+*.bak
+*.old
+
+# ---------- 个人临时调试脚本 & 测试照片 ----------
+test_photo.jpg
+test_photo*.jpg
+test_photo*.png
+check-chroma.py
+start-chroma.py
