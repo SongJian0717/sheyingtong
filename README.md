@@ -16,29 +16,14 @@
 
 | 🏠 首页 | 🤖 AI 问答助手 | 🖼️ 照片 6 维打分 |
 |:---:|:---:|:---:|
-| [![首页](docs/screenshots/03-homepage.png)](docs/screenshots/03-homepage.png) | [![AI问答](docs/screenshots/01-ai-chat.png)](docs/screenshots/01-ai-chat.png) | [![照片打分](docs/screenshots/04-photo-score.png)](docs/screenshots/04-photo-score.png) |
+| [![首页](docs/screenshots/02-retouch-compare.png)](docs/screenshots/02-retouch-compare.png) | [![AI问答](docs/screenshots/04-photo-score.png)](docs/screenshots/04-photo-score.png) | [![照片打分](docs/screenshots/01-ai-chat.png)](docs/screenshots/01-ai-chat.png) |
 | 渐变紫色调 UI，500+ 术语 / 10000+ / 200+ 推荐 | 流式打字机 + 工具调用 | Qwen-VL 多模态，构图光线色彩对焦内容综合 |
 
 | 📷 器材智能推荐 | 🎨 修图建议实时对比 |
 |:---:|:---:|
-| [![器材推荐](docs/screenshots/05-gear-recommend.png)](docs/screenshots/05-gear-recommend.png) | [![修图对比](docs/screenshots/02-retouch-compare.png)](docs/screenshots/02-retouch-compare.png) |
+| [![器材推荐](docs/screenshots/03-homepage.png)](docs/screenshots/03-homepage.png) | [![修图对比](docs/screenshots/05-gear-recommend.png)](docs/screenshots/05-gear-recommend.png) |
 | 预算 / 水平 / 类型 / 品牌 4 条件筛选，AI 智能推荐方案 | Canvas 实时对比原图 vs 修图效果，附 5 步修图流程 |
 
-> 💡 **截图使用说明：将 5 张截图按下列命名放入 [docs/screenshots/](docs/screenshots/) 目录即可显示（文件名详见 [截图放置与命名要求](#截图放置与命名要求) 一节）
-
----
-
-## 截图放置与命名要求
-为确保 README 图片正常显示，请将本地 5 张截图按以下规则命名后复制到 `docs/screenshots/` 目录：
-| 序号 | 页面功能 | 文件名（必须完全一致） |
-|:---:|:---|:---|
-| 1 | AI 问答聊天主界面（左侧选中 AI 问答、流式打字机效果） | `docs/screenshots/01-ai-chat.png` |
-| 2 | 修图建议对比预览（原图 vs 效果图对比 + 修图步骤） | `docs/screenshots/02-retouch-compare.png` |
-| 3 | 首页（紫色渐变 Banner + 核心功能卡片） | `docs/screenshots/03-homepage.png` |
-| 4 | 照片打分结果页（92 分 + 6 维雷达图 + 详细评语） | `docs/screenshots/04-photo-score.png` |
-| 5 | 器材选购推荐方案页（AI 智能推荐 + 综合建议） | `docs/screenshots/05-gear-recommend.png` |
-
-放置完成后刷新 GitHub README 即可自动显示截图。
 
 ---
 
@@ -71,18 +56,7 @@
 | 🎓 | **学习资源** | 3 大板块联动：<br>📘 入门教程（6 章互动手风琴 + 进度跟踪）<br>💡 摄影技巧（8 类场景 12+ 详细技巧 + 参数推荐卡）<br>🖼️ 作品赏析（6 幅精选作品 + 技术参数 + 专家点评模态对话框） |
 | 🔐 | **用户体系** | Spring Security 6 + **JWT(HS512) + BCrypt** 密码哈希，无状态鉴权；支持注册/登录/头像上传/修改密码/用户统计；Token 过期前端自动弹登录框；DELETE / 上传 / 聊天 / 打分全部需认证 |
 
-### 📸 各模块功能截图一览
-| 🤖 AI 摄影问答（流式打字机+工具调用） | 🖼️ 照片 6 维打分（多模态） | 🎨 修图建议实时对比（Canvas） |
-|:---:|:---:|:---:|
-| [![AI摄影问答](docs/screenshots/01-ai-chat.png)](docs/screenshots/01-ai-chat.png) | [![照片打分](docs/screenshots/04-photo-score.png)](docs/screenshots/04-photo-score.png) | [![修图对比](docs/screenshots/02-retouch-compare.png)](docs/screenshots/02-retouch-compare.png) |
-| SSE 流式逐字输出 · 工具自动查词典/算曝光/找器材 | 构图/光线/色彩/对焦/内容/综合 6 维雷达图 | 左原图右修图，滑块实时对比 8 参数滤镜效果 |
 
-| 📷 器材智能推荐（4条件筛选+AI推荐） | 🏠 首页（渐变紫色调+数据看板） |
-|:---:|:---:|
-| [![器材推荐](docs/screenshots/05-gear-recommend.png)](docs/screenshots/05-gear-recommend.png) | [![首页](docs/screenshots/03-homepage.png)](docs/screenshots/03-homepage.png) |
-| 预算/水平/类型/品牌下拉 → AI智能 Top3推荐方案 | 500+术语 · 10000+照片分析 · 200+器材推荐 |
-
----
 
 ## 🏗️ 技术架构
 
