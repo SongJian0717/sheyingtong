@@ -12,8 +12,40 @@
 
 ---
 
+## 🖼️ 产品概览
+
+| 🏠 首页 | 🤖 AI 问答助手 | 🖼️ 照片 6 维打分 |
+|:---:|:---:|:---:|
+| [![首页](docs/screenshots/03-homepage.png)](docs/screenshots/03-homepage.png) | [![AI问答](docs/screenshots/01-ai-chat.png)](docs/screenshots/01-ai-chat.png) | [![照片打分](docs/screenshots/04-photo-score.png)](docs/screenshots/04-photo-score.png) |
+| 渐变紫色调 UI，500+ 术语 / 10000+ / 200+ 推荐 | 流式打字机 + 工具调用 | Qwen-VL 多模态，构图光线色彩对焦内容综合 |
+
+| 📷 器材智能推荐 | 🎨 修图建议实时对比 |
+|:---:|:---:|
+| [![器材推荐](docs/screenshots/05-gear-recommend.png)](docs/screenshots/05-gear-recommend.png) | [![修图对比](docs/screenshots/02-retouch-compare.png)](docs/screenshots/02-retouch-compare.png) |
+| 预算 / 水平 / 类型 / 品牌 4 条件筛选，AI 智能推荐方案 | Canvas 实时对比原图 vs 修图效果，附 5 步修图流程 |
+
+> 💡 **截图使用说明：将 5 张截图按下列命名放入 [docs/screenshots/](docs/screenshots/) 目录即可显示（文件名详见 [截图放置与命名要求](#截图放置与命名要求) 一节）
+
+---
+
+## 截图放置与命名要求
+为确保 README 图片正常显示，请将本地 5 张截图按以下规则命名后复制到 `docs/screenshots/` 目录：
+| 序号 | 页面功能 | 文件名（必须完全一致） |
+|:---:|:---|:---|
+| 1 | AI 问答聊天主界面（左侧选中 AI 问答、流式打字机效果） | `docs/screenshots/01-ai-chat.png` |
+| 2 | 修图建议对比预览（原图 vs 效果图对比 + 修图步骤） | `docs/screenshots/02-retouch-compare.png` |
+| 3 | 首页（紫色渐变 Banner + 核心功能卡片） | `docs/screenshots/03-homepage.png` |
+| 4 | 照片打分结果页（92 分 + 6 维雷达图 + 详细评语） | `docs/screenshots/04-photo-score.png` |
+| 5 | 器材选购推荐方案页（AI 智能推荐 + 综合建议） | `docs/screenshots/05-gear-recommend.png` |
+
+放置完成后刷新 GitHub README 即可自动显示截图。
+
+---
+
 ## 目录
 
+- [🖼️ 产品概览](#️-产品概览)
+- [截图放置与命名要求](#截图放置与命名要求)
 - [✨ 功能亮点](#-功能亮点)
 - [🏗️ 技术架构](#️-技术架构)
 - [🚀 快速开始](#-快速开始)
@@ -38,6 +70,17 @@
 | 📷 | **器材智能推荐** | 按品牌/类型/预算范围过滤，卡片展示价格/参数/适用人群，给新手最清晰的购机决策 |
 | 🎓 | **学习资源** | 3 大板块联动：<br>📘 入门教程（6 章互动手风琴 + 进度跟踪）<br>💡 摄影技巧（8 类场景 12+ 详细技巧 + 参数推荐卡）<br>🖼️ 作品赏析（6 幅精选作品 + 技术参数 + 专家点评模态对话框） |
 | 🔐 | **用户体系** | Spring Security 6 + **JWT(HS512) + BCrypt** 密码哈希，无状态鉴权；支持注册/登录/头像上传/修改密码/用户统计；Token 过期前端自动弹登录框；DELETE / 上传 / 聊天 / 打分全部需认证 |
+
+### 📸 各模块功能截图一览
+| 🤖 AI 摄影问答（流式打字机+工具调用） | 🖼️ 照片 6 维打分（多模态） | 🎨 修图建议实时对比（Canvas） |
+|:---:|:---:|:---:|
+| [![AI摄影问答](docs/screenshots/01-ai-chat.png)](docs/screenshots/01-ai-chat.png) | [![照片打分](docs/screenshots/04-photo-score.png)](docs/screenshots/04-photo-score.png) | [![修图对比](docs/screenshots/02-retouch-compare.png)](docs/screenshots/02-retouch-compare.png) |
+| SSE 流式逐字输出 · 工具自动查词典/算曝光/找器材 | 构图/光线/色彩/对焦/内容/综合 6 维雷达图 | 左原图右修图，滑块实时对比 8 参数滤镜效果 |
+
+| 📷 器材智能推荐（4条件筛选+AI推荐） | 🏠 首页（渐变紫色调+数据看板） |
+|:---:|:---:|
+| [![器材推荐](docs/screenshots/05-gear-recommend.png)](docs/screenshots/05-gear-recommend.png) | [![首页](docs/screenshots/03-homepage.png)](docs/screenshots/03-homepage.png) |
+| 预算/水平/类型/品牌下拉 → AI智能 Top3推荐方案 | 500+术语 · 10000+照片分析 · 200+器材推荐 |
 
 ---
 
@@ -306,6 +349,13 @@ sheyingtong/
 
 ### 2. AI 聊天（SSE 流式 + Function Calling）
 > 代码入口：[ChatService.java](backend/src/main/java/com/sheyingtong/service/ChatService.java) / [chat.js](frontend/src/api/chat.js)
+
+<details>
+<summary>🎞️ 界面预览（点击展开截图）</summary>
+
+[![AI聊天预览](docs/screenshots/01-ai-chat.png)](docs/screenshots/01-ai-chat.png)
+</details>
+
 - **非流式** `/message`：用 LangChain4j `PhotographyAssistant`，自动带工具调用 + Redis 记忆 + RAG 召回，适合调试 curl。
 - **流式** `/message/stream`：用 WebFlux `Flux<String>` + reactor `Sinks.Many` 发布订阅，
   后台线程跑 `StreamingChatModel.chat()` → 每 token sink.emitNext → 前端 XMLHttpRequest onprogress 增量拼 fullResponse。
@@ -313,6 +363,15 @@ sheyingtong/
 
 ### 3. 照片打分 + 修图（Qwen-VL-Plus 多模态）
 > 代码入口：[AIService.java](backend/src/main/java/com/sheyingtong/service/AIService.java)
+
+<details>
+<summary>🎞️ 界面预览（点击展开截图：左打分 / 右修图对比）</summary>
+
+| 照片 6 维打分结果页 | 修图建议实时对比页 |
+|:---:|:---:|
+| [![打分预览](docs/screenshots/04-photo-score.png)](docs/screenshots/04-photo-score.png) | [![修图预览](docs/screenshots/02-retouch-compare.png)](docs/screenshots/02-retouch-compare.png) |
+</details>
+
 - **压缩策略**：图片先压缩到短边 1024（DashScope 建议 < 2MB），再转 Base64，传输更快 + 省 token。
 - **3 次重试机制**：网络抖动、限流、5xx 异常一律 catch，间隔 2s 重试；3 次全失败前端才弹错。
 - **Markdown fences 剥离**：模型偶尔把 JSON 放在 ```json ... ``` 里，parseResponse 正则去掉后再反序列化。
@@ -325,6 +384,15 @@ sheyingtong/
 
 ### 5. 前端 HTTP 链路（axios + XMLHttpRequest 双轨制）
 > 代码入口：[request.js](frontend/src/utils/request.js) / [chat.js](frontend/src/api/chat.js)
+
+<details>
+<summary>🎞️ 界面预览（点击展开：首页 + 器材推荐页）</summary>
+
+| 首页渐变 Banner + 数据看板 | 器材选购 AI 推荐方案页 |
+|:---:|:---:|
+| [![首页预览](docs/screenshots/03-homepage.png)](docs/screenshots/03-homepage.png) | [![器材推荐预览](docs/screenshots/05-gear-recommend.png)](docs/screenshots/05-gear-recommend.png) |
+</details>
+
 - **普通 REST**：走 axios 单例 → 请求拦截器自动注入 `Authorization: Bearer <token>` → 响应拦截器自动解包 `ApiResponse.data` → code≠200 弹 ElMessage + reject。
 - **SSE 流式**：走原生 XMLHttpRequest（axios 浏览器端不支持 responseType stream），**手动 setRequestHeader 加 Authorization**（之前丢这个 → 403 的经典坑）。
 - **鉴权守卫**：router.beforeEach → `requiresAuth && !token` → 弹 ElMessageBox 阻止跳转 → 引导去登录。
