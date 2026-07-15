@@ -11,6 +11,7 @@ import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.ParameterizedTypeReference;
@@ -36,8 +37,22 @@ public class ChromaRagService {
     private final EmbeddingModel embeddingModel;
 
     private final RestTemplate restTemplate = new RestTemplate();
-    private static final String CHROMA_URL = "http://localhost:8002";
-    private static final String COLLECTION_NAME = "photography_dictionary";
+
+    // ⚠️ 不再硬编码，统一从 application.yml 的 chroma.host / chroma.port / collection-name 读取
+    //    之前硬编码 http://localhost:8002 与配置 8000 不一致，导致 RAG 后端一直连不上向量库
+    @Value("${chroma.host:127.0.0.1}")
+    private String chromaHost;
+
+    @Value("${chroma.port:8002}")
+    private int chromaPort;
+
+    @Value("${chroma.collection-name:photography_dictionary}")
+    private String collectionName;
+
+    /** Build base URL lazily (after @Value fields injected) */
+    private String chromaUrl() {
+        return "http://" + chromaHost + ":" + chromaPort;
+    }
 
     private volatile boolean initialized = false;
     private volatile boolean initializationStarted = false;
@@ -263,7 +278,7 @@ public class ChromaRagService {
             request.put("embeddings", List.of(embeddingList));
             request.put("metadatas", List.of(metadata));
 
-            String url = CHROMA_URL + "/collections/" + COLLECTION_NAME + "/add";
+            String url = chromaUrl() + "/collections/" + collectionName + "/add";
             restTemplate.postForObject(url, request, Map.class);
             return 1;
         } catch (Exception e) {
@@ -289,7 +304,7 @@ public class ChromaRagService {
             request.put("n_results", maxResults);
             request.put("include", List.of("documents", "metadatas", "distances"));
 
-            String url = CHROMA_URL + "/collections/" + COLLECTION_NAME + "/query";
+            String url = chromaUrl() + "/collections/" + collectionName + "/query";
             ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
                     url,
                     HttpMethod.POST,
@@ -324,6 +339,30 @@ public class ChromaRagService {
         } catch (Exception e) {
             log.error("Chroma搜索失败: {}", e.getMessage());
             return List.of();
+        }
+    }
+
+    /**
+     * 重置（删除）整个 photography_dictionary 向量集合。
+     * 触发场景：
+     *   · 修复向量乱码：MySQL中文被双重编码后写入Chroma，检索到的上下文也是乱码
+     *   · 数据大规模变动后哈希不再匹配
+     *   · 向量数与MySQL词条数不匹配的极端情况
+     *
+     * 注意：删除后 ragService.syncKnowledgeBase() 会从 MySQL 重新 embedding 重建；
+     *       50 条术语约 30~60 秒，期间检索结果为空属正常现象。
+     */
+    public void resetCollection() {
+        String url = chromaUrl() + "/collections/" + collectionName;
+        try {
+            restTemplate.delete(url);
+            log.info("Chroma 集合 [{}] 已删除（重置成功，等待重建）", collectionName);
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound nfe) {
+            // 集合本来就不存在 → 不用管，下次sync会自动创建
+            log.warn("Chroma 集合 [{}] 本来就不存在（无需重置）", collectionName);
+        } catch (Exception e) {
+            log.error("删除 Chroma 集合失败：{}", e.getMessage());
+            // 不抛出：让 syncKnowledgeBase() 继续尝试，万一 Chroma 服务重启也会因为向量数=0 自动重同步
         }
     }
 }

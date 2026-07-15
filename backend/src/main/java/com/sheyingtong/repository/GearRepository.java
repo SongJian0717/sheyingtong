@@ -22,11 +22,13 @@ public interface GearRepository extends JpaRepository<Gear, Long> {
     @Query("SELECT g FROM Gear g WHERE " +
            "(:keyword IS NULL OR g.brand LIKE %:keyword% OR g.model LIKE %:keyword%) AND " +
            "(:category IS NULL OR g.category.id = :category) AND " +
+           "(:brand IS NULL OR g.brand LIKE %:brand%) AND " +
            "(:minPrice IS NULL OR g.price >= :minPrice) AND " +
            "(:maxPrice IS NULL OR g.price <= :maxPrice)")
     Page<Gear> search(
             @Param("keyword") String keyword,
             @Param("category") Long categoryId,
+            @Param("brand") String brand,
             @Param("minPrice") BigDecimal minPrice,
             @Param("maxPrice") BigDecimal maxPrice,
             Pageable pageable

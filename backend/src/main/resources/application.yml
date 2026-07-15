@@ -13,10 +13,20 @@ spring:
     name: sheyingtong
   
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/sheyingtong?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai}
-    username: ${DB_USERNAME:}
-    password: ${DB_PASSWORD:}
+    # ⚠️ JDBC URL 注意：characterEncoding 参数的值必须写 Java 识别的 charset 名 "UTF-8"
+    #     绝对不能写 MySQL 的 charset 名 "utf8mb4"！因为 "utf8mb4" 是 MySQL 发明的名字，
+    #     Java String.lookupCharset("utf8mb4") 直接抛 java.io.UnsupportedEncodingException，
+    #     导致 HikariPool 初始化挂掉 → 后端完全起不来。
+    #   · MySQL 服务端：库/表/列 字符集用 utf8mb4 ✅（schema.sql / data.sql 里继续用 utf8mb4）
+    #   · JDBC 连接串：characterEncoding= UTF-8 ✅（Java 世界的标准名，Connector/J 内部自动转成 utf8mb4 协议）
+    #   · connectionCollation：写 MySQL 排序规则 utf8mb4_unicode_ci ✅（排序规则是 MySQL 的概念）
+    url: ${DB_URL:jdbc:mysql://localhost:3306/sheyingtong?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # ⚠️ SET NAMES utf8mb4 是发给 MySQL 服务器执行的 SQL，用 MySQL 自己的字符集名 ✅
+      connection-init-sql: SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci
   
   jpa:
     hibernate:
@@ -30,18 +40,29 @@ spring:
         format_sql: true
         dialect: org.hibernate.dialect.MySQLDialect
         connection:
-          characterEncoding: utf8
+          # ⚠️ 同 datasource.url 的 characterEncoding，必须写 Java 识别的 "UTF-8"，不能写 "utf8mb4"
+          characterEncoding: UTF-8
           useUnicode: true
+          # ⚠️ connectionCollation 是 MySQL 排序规则名，继续 utf8mb4_unicode_ci ✅
+          connectionCollation: utf8mb4_unicode_ci
   
   # ---------- Spring Boot SQL 种子数据初始化配置 ----------
-  # data.sql 位置：backend/src/main/resources/data.sql
+  # schema.sql：先执行，设置数据库/表字符集为 utf8mb4（表不存在时ALTER会报错，continue-on-error已忽略）
+  # data.sql：后执行，插入 50 条干净的摄影术语 + 器材种子数据
   # mode=always：每次启动都执行（data.sql 内用 INSERT IGNORE / ON DUPLICATE KEY UPDATE 保证幂等）
   sql:
     init:
       mode: always
+      schema-locations: classpath:schema.sql
       data-locations: classpath:data.sql
-      # data.sql 执行失败直接让应用启动终止，避免 silent failure（比如表名写错了也不知道）
-      continue-on-error: false
+      # ⚠️ schema.sql 中 ALTER TABLE 在首次启动表不存在时会报错，必须设为 true 忽略，
+      #    让流程继续执行 data.sql。真正的语法错误仍会在控制台打印WARN日志。
+      continue-on-error: true
+      # ⚠️ 乱码终极修复：Windows 默认系统编码是 GBK，Spring Boot 会用 GBK 读 classpath 的 .sql 脚本
+      #    data.sql/schema.sql 都是 UTF-8 文件，如果不显式指定 encoding=UTF-8，
+      #    里面的中文会被按 GBK 解码后再按 UTF-8 写入 MySQL → 写入的就是乱码！
+      #    加上这行后 Spring Boot 统一按 UTF-8 读取，中文就对了。
+      encoding: UTF-8
   
   http:
     encoding:
@@ -58,6 +79,17 @@ spring:
     redis:
       host: localhost
       port: 6379
+      # ⚠️ Windows下如果没启动Redis，Spring Boot启动会默认无限等连接，卡死在初始化
+      #    必须设短超时（500ms），连不上快速失败，同时不要让启动挂死
+      connect-timeout: 500ms
+      timeout: 500ms
+      lettuce:
+        pool:
+          max-active: 2
+          max-idle: 1
+          min-idle: 0
+          max-wait: 500ms
+        shutdown-timeout: 100ms
 
 jwt:
   secret: ${JWT_SECRET:}
@@ -74,6 +106,38 @@ qwen:
   timeout: 180000
 
 chroma:
-  host: localhost
-  port: 8000
+  host: 127.0.0.1
+  # ⚠️ 必须和 chroma-service/main.py 中 uvicorn.run(port=xxx) 保持一致！
+  #   · chroma-service/main.py 默认 port=8002
+  #   · 旧配置 8000 是错的，之前会导致后端连不上向量库，RAG全部挂
+  port: 8002
   collection-name: photography_dictionary
+
+# ---------- RAG 自动同步配置 ----------
+app:
+  rag:
+    # ⚠️ 应急开关：true = 启动时直接删 chroma 集合重建（乱码/向量坏了用一次）
+    #    正常运行时保持 false，否则每次启动都重跑 50 条向量化，浪费时间
+    force-reset-on-start: false
+
+# ---------- Springdoc OpenAPI / Swagger UI 配置 ----------
+springdoc:
+  # 启用 /v3/api-docs 端点
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  # 启用 Swagger UI 页面
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    # 在 Swagger UI 中显示 "Authorize" 按钮，支持 JWT 输入
+    tags-sorter: alpha
+    operations-sorter: alpha
+    # 页面加载时默认展开的层级：1 = 仅展开标签(Tag)
+    doc-expansion: list
+  # 扫描所有 Controller 包路径（多模块时防止漏扫）
+  packages-to-scan: com.sheyingtong.controller
+  # 匹配所有 /api/** 接口（可选，默认扫描所有已映射请求）
+  paths-to-match: /**
+  # 支持同时加载 spring-boot-starter-web + webflux（项目里同时引入了两个 starter）
+  prefer-mvc: true

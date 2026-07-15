@@ -3,13 +3,35 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
 import chromadb
 from chromadb.config import Settings
+import os
 
 app = FastAPI(title="Chroma Vector Service")
 
+# Chroma 持久化目录：基于本文件所在路径，支持跨机器迁移（不要再写死用户名的绝对路径！）
+#   · __file__       = .../sheyingtong/chroma-service/main.py
+#   · os.path.dirname(__file__) = .../sheyingtong/chroma-service
+#   · 上一级 = .../sheyingtong  →  拼上 chroma-data 就是项目根下的持久化目录
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CHROMA_PERSIST_DIR = os.path.join(_BASE_DIR, "chroma-data")
+os.makedirs(_CHROMA_PERSIST_DIR, exist_ok=True)
+
 chroma_client = chromadb.PersistentClient(
-    path="c:/Users/ZhuQian/Documents/trae_projects/sheyingtong/chroma-data",
+    path=_CHROMA_PERSIST_DIR,
     settings=Settings(chroma_server_cors_allow_origins=["*"])
 )
+
+@app.get("/health")
+async def health():
+    """Lightweight health check for startup scripts (returns immediately)."""
+    return {
+        "status": "ok",
+        "persist_dir": _CHROMA_PERSIST_DIR,
+        "collections": len(chroma_client.list_collections())
+    }
+
+@app.get("/")
+async def root():
+    return {"message": "Chroma Vector Service is running", "persist_dir": _CHROMA_PERSIST_DIR}
 
 class EmbeddingRequest(BaseModel):
     texts: List[str]

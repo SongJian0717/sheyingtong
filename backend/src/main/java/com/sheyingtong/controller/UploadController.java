@@ -1,6 +1,9 @@
 package com.sheyingtong.controller;
 
 import com.sheyingtong.dto.response.ApiResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -13,14 +16,18 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.UUID;
 
+@Tag(name = "文件上传", description = "通用文件上传接口，目前支持用户头像上传（jpg/png/gif≤5MB），后续可扩展作品图等场景")
 @RestController
 @RequestMapping("/api/upload")
 public class UploadController {
 
     private static final String UPLOAD_DIR = "./uploads/avatars";
 
+    @Operation(summary = "上传用户头像", description = "将头像图片保存到服务器本地（./uploads/avatars），返回可访问的URL路径（配合WebConfig静态资源映射）。支持jpg/png/gif，最大5MB。【需登录】")
     @PostMapping("/avatar")
-    public ApiResponse<String> uploadAvatar(@RequestParam("file") MultipartFile file) {
+    public ApiResponse<String> uploadAvatar(
+            @Parameter(description = "头像图片文件（jpg/jpeg/png/gif）", required = true)
+            @RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) {
             return ApiResponse.error("请选择要上传的文件");
         }

@@ -52,12 +52,6 @@
           </router-link>
         </li>
         <li>
-          <router-link to="/tips" class="nav-link" :class="{ active: $route.name === 'tips' }">
-            <span class="nav-icon">📝</span>
-            <span class="nav-text">摄影技巧</span>
-          </router-link>
-        </li>
-        <li>
           <router-link to="/gallery" class="nav-link" :class="{ active: $route.name === 'gallery' }">
             <span class="nav-icon">🏆</span>
             <span class="nav-text">作品赏析</span>

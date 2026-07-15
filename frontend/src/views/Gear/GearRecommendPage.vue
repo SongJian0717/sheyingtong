@@ -51,14 +51,26 @@
             
             <el-col :span="12">
               <el-form-item label="偏好品牌">
-                <el-select v-model="requirementForm.brand" placeholder="请选择品牌（可选）" style="width: 100%" clearable>
-                  <el-option label="佳能 Canon" value="佳能" />
-                  <el-option label="尼康 Nikon" value="尼康" />
-                  <el-option label="索尼 Sony" value="索尼" />
-                  <el-option label="富士 Fujifilm" value="富士" />
-                  <el-option label="奥林巴斯 Olympus" value="奥林巴斯" />
-                  <el-option label="松下 Panasonic" value="松下" />
-                  <el-option label="徕卡 Leica" value="徕卡" />
+                <el-select v-model="requirementForm.brand" placeholder="请选择品牌（可选）" style="width: 100%" clearable filterable>
+                  <el-option label="索尼 Sony" value="Sony" />
+                  <el-option label="佳能 Canon" value="Canon" />
+                  <el-option label="尼康 Nikon" value="Nikon" />
+                  <el-option label="富士 Fujifilm" value="Fujifilm" />
+                  <el-option label="适马 Sigma" value="Sigma" />
+                  <el-option label="腾龙 Tamron" value="Tamron" />
+                  <el-option label="森养 Samyang" value="Samyang" />
+                  <el-option label="捷信 Gitzo" value="Gitzo" />
+                  <el-option label="曼富图 Manfrotto" value="Manfrotto" />
+                  <el-option label="巅峰设计 Peak Design" value="Peak Design" />
+                  <el-option label="大疆 DJI" value="DJI" />
+                  <el-option label="百诺 Benro" value="Benro" />
+                  <el-option label="神牛 Godox" value="Godox" />
+                  <el-option label="永诺 Yongnuo" value="Yongnuo" />
+                  <el-option label="斯莫格 SmallRig" value="SmallRig" />
+                  <el-option label="耐司 NiSi" value="NiSi" />
+                  <el-option label="K&F Concept" value="K&F Concept" />
+                  <el-option label="徕卡 Leica" value="Leica" />
+                  <el-option label="松下 Panasonic" value="Panasonic" />
                 </el-select>
               </el-form-item>
             </el-col>
@@ -162,12 +174,78 @@
         </div>
       </div>
     </div>
+
+    <div class="all-gear-section">
+      <div class="section-header all-gear-header">
+        <h3>📦 全部器材库（共 {{ allGearTotal }} 款）</h3>
+        <div class="search-box">
+          <el-input
+            v-model="gearKeyword"
+            placeholder="搜索器材型号或品牌（如：24-70、Sony、三脚架）"
+            clearable
+            style="width: 340px"
+            @keyup.enter="handleSearch"
+            @clear="handleSearch">
+            <template #append>
+              <el-button @click="handleSearch">🔍 搜索</el-button>
+            </template>
+          </el-input>
+        </div>
+      </div>
+
+      <div class="category-tabs">
+        <div
+          class="tab-item"
+          :class="{ active: activeCategoryId === null }"
+          @click="handleCategoryChange(null)">
+          全部（{{ allGearTotal }}）
+        </div>
+        <div
+          v-for="cat in gearCategories"
+          :key="cat.id"
+          class="tab-item"
+          :class="{ active: activeCategoryId === cat.id }"
+          @click="handleCategoryChange(cat.id)">
+          <span v-if="cat.icon">{{ cat.icon }}</span> {{ cat.name }}（{{ categoryCounts[cat.id] || 0 }}）
+        </div>
+      </div>
+
+      <div v-loading="allGearLoading" class="hot-gear-list all-gear-list">
+        <div
+          v-for="gear in allGearList"
+          :key="gear.id"
+          class="hot-gear-card all-gear-card"
+          @click="viewDetail(gear.id)">
+          <div class="hot-gear-image">
+            <img :src="gear.imageUrl" :alt="gear.model" />
+          </div>
+          <div class="hot-gear-info">
+            <div class="hot-gear-brand">{{ gear.brand }} · {{ gear.category?.name || '其他' }}</div>
+            <div class="hot-gear-model">{{ gear.model }}</div>
+            <div class="hot-gear-price">¥{{ formatPrice(gear.price) }}</div>
+          </div>
+        </div>
+        <div v-if="allGearList.length === 0 && !allGearLoading" class="empty-tip">
+          😅 没有找到符合条件的器材，试试换个关键词或分类
+        </div>
+      </div>
+
+      <div v-if="allGearTotal > allGearSize" class="pagination-wrap">
+        <el-pagination
+          background
+          layout="prev, pager, next, total, jumper"
+          :total="allGearTotal"
+          :page-size="allGearSize"
+          :current-page="allGearPage"
+          @current-change="handlePageChange" />
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { getRecommendations as fetchRecommendationsApi, getPopularGear } from '../../api/gear'
+import { ref, onMounted, watch } from 'vue'
+import { getRecommendations as fetchRecommendationsApi, getPopularGear, searchGear, getCategories } from '../../api/gear'
 
 const requirementForm = ref({
   minBudget: null,
@@ -183,6 +261,16 @@ const isLoading = ref(false)
 const recommendations = ref([])
 const recommendationSummary = ref('')
 const hotGearList = ref([])
+
+const gearCategories = ref([])
+const activeCategoryId = ref(null)
+const gearKeyword = ref('')
+const allGearList = ref([])
+const allGearTotal = ref(0)
+const allGearPage = ref(1)
+const allGearSize = ref(15)
+const allGearLoading = ref(false)
+const categoryCounts = ref({})
 
 const formatPrice = (price) => {
   if (typeof price === 'number') {
@@ -268,8 +356,77 @@ const loadHotGear = async () => {
   }
 }
 
+const loadCategories = async () => {
+  try {
+    gearCategories.value = await getCategories()
+  } catch (error) {
+    console.error('加载器材分类失败:', error)
+    gearCategories.value = []
+  }
+}
+
+const loadCategoryCounts = async () => {
+  try {
+    const resp = await searchGear({ page: 0, size: 9999 })
+    const allGears = resp.content || []
+    const counts = {}
+    allGears.forEach(g => {
+      if (g.category && g.category.id) {
+        counts[g.category.id] = (counts[g.category.id] || 0) + 1
+      }
+    })
+    categoryCounts.value = counts
+  } catch (error) {
+    console.error('加载分类数量失败:', error)
+    categoryCounts.value = {}
+  }
+}
+
+const loadAllGear = async () => {
+  allGearLoading.value = true
+  try {
+    const pageParams = {
+      page: allGearPage.value - 1,
+      size: allGearSize.value
+    }
+    if (activeCategoryId.value) pageParams.categoryId = activeCategoryId.value
+    if (gearKeyword.value && gearKeyword.value.trim()) pageParams.keyword = gearKeyword.value.trim()
+    const resp = await searchGear(pageParams)
+    allGearList.value = resp.content || []
+    allGearTotal.value = resp.totalElements || 0
+  } catch (error) {
+    console.error('加载全部器材失败:', error)
+    allGearList.value = []
+    allGearTotal.value = 0
+  } finally {
+    allGearLoading.value = false
+  }
+}
+
+const handleCategoryChange = (catId) => {
+  activeCategoryId.value = activeCategoryId.value === catId ? null : catId
+  allGearPage.value = 1
+  loadAllGear()
+}
+
+const handleSearch = () => {
+  allGearPage.value = 1
+  loadAllGear()
+}
+
+const handlePageChange = (p) => {
+  allGearPage.value = p
+  loadAllGear()
+}
+
+watch([activeCategoryId, gearKeyword, allGearPage, allGearSize], () => {
+})
+
 onMounted(() => {
   loadHotGear()
+  loadCategories()
+  loadAllGear()
+  loadCategoryCounts()
 })
 </script>
 
@@ -595,9 +752,118 @@ onMounted(() => {
   color: #f56c6c;
 }
 
+.all-gear-section {
+  margin-top: 40px;
+  padding: 20px;
+  background: #fafbfc;
+  border-radius: 12px;
+}
+
+.all-gear-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.all-gear-header h3 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+}
+
+.category-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.tab-item {
+  padding: 8px 18px;
+  background: #fff;
+  border: 1px solid #dcdfe6;
+  border-radius: 20px;
+  font-size: 14px;
+  color: #606266;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  user-select: none;
+}
+
+.tab-item:hover {
+  color: #667eea;
+  border-color: #667eea;
+  background: #f0f3ff;
+}
+
+.tab-item.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.35);
+}
+
+.all-gear-list {
+  min-height: 300px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 18px;
+}
+
+.all-gear-card {
+  transition: all 0.3s ease;
+}
+
+.all-gear-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(102, 126, 234, 0.12);
+}
+
+.empty-tip {
+  grid-column: 1 / -1;
+  padding: 60px 20px;
+  text-align: center;
+  color: #909399;
+  font-size: 15px;
+  background: #fff;
+  border-radius: 10px;
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid #e4e7ed;
+}
+
 @media (max-width: 768px) {
   .recommendations-grid {
     grid-template-columns: 1fr;
+  }
+
+  .all-gear-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .search-box,
+  .search-box .el-input {
+    width: 100% !important;
+  }
+
+  .all-gear-list {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
   }
 }
 </style>

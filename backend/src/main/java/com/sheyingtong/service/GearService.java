@@ -22,10 +22,10 @@ public class GearService {
     private final GearRepository gearRepository;
     private final GearCategoryRepository categoryRepository;
     
-    public Page<Gear> searchGear(String keyword, Long categoryId, 
+    public Page<Gear> searchGear(String keyword, Long categoryId, String brand,
                                   BigDecimal minPrice, BigDecimal maxPrice, 
                                   Pageable pageable) {
-        return gearRepository.search(keyword, categoryId, minPrice, maxPrice, pageable);
+        return gearRepository.search(keyword, categoryId, brand, minPrice, maxPrice, pageable);
     }
     
     public Gear getGearDetail(Long id) {

@@ -49,11 +49,35 @@ public class RagAutoSyncRunner implements ApplicationRunner {
     @Value("${app.rag.auto-sync:true}")
     private boolean autoSyncEnabled;
 
+    /**
+     * 修复乱码/脏数据的应急开关：application.yml 里 app.rag.force-reset-on-start=true，
+     * 下次启动就会先 DELETE 整个 photography_dictionary 集合，再从 MySQL 全量重同步。
+     * 用完记得改回 false，避免每次启动都全量重算 embedding 烧 Token / 浪费时间。
+     * 触发条件：true  → 每次启动无条件删集合重建
+     *          false（默认） → 仅当向量数=0 或 比词条数少 10%+ 才同步
+     */
+    @Value("${app.rag.force-reset-on-start:false}")
+    private boolean forceResetOnStart;
+
     @Override
     public void run(ApplicationArguments args) {
         if (!autoSyncEnabled) {
             log.info("【RAG自动同步】配置 app.rag.auto-sync=false，跳过自动同步");
             return;
+        }
+
+        // Step 0：如果开启了强制重建（修复乱码时用）→ 先删掉整个旧集合
+        if (forceResetOnStart) {
+            log.warn("================================================================");
+            log.warn("  ⚠️  app.rag.force-reset-on-start = true，即将删除 Chroma 集合后重建");
+            log.warn("       （用于修复向量乱码、向量哈希不匹配、检索结果异常等情况）");
+            log.warn("================================================================");
+            try {
+                chromaRagService.resetCollection();
+                log.info("【RAG自动同步】已删除旧 photography_dictionary 集合，准备全量重建");
+            } catch (Exception e) {
+                log.warn("【RAG自动同步】删除旧集合失败（可能集合不存在，忽略即可）：{}", e.getMessage());
+            }
         }
 
         // Step 1：看 MySQL 有没有词条数（刚启动新机器还没写 data.sql 可能为 0）

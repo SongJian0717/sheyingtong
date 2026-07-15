@@ -4,10 +4,13 @@ import com.sheyingtong.config.JwtConfig;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -24,6 +27,7 @@ import java.util.function.Function;
  *   - exp (expiration): 过期时间 = 签发时间 + JwtConfig.expiration(ms)
  * 密钥来源：JwtConfig.secret，来自 application.yml ${JWT_SECRET:...}
  */
+@Slf4j
 @Component
 public class JwtUtil {
     
@@ -32,12 +36,29 @@ public class JwtUtil {
     
     /**
      * 构造器：注入 JwtConfig 并预生成 SecretKey（避免每次签/验都重新创建）
+     * 容错处理：如果配置的 secret 为空 / 长度不足（<32字节=256bits），自动生成 512bits 安全随机密钥
+     *           避免 WeakKeyException 导致整个服务启动失败（本地开发友好）
      * @param jwtConfig JWT 参数配置（secret 字符串 + expiration 毫秒数）
      */
     public JwtUtil(JwtConfig jwtConfig) {
         this.jwtConfig = jwtConfig;
-        // 原始 secret → UTF-8 字节 → 按 RFC7518 生成 HS512 可用的 SecretKey 对象
-        this.secretKey = Keys.hmacShaKeyFor(jwtConfig.getSecret().getBytes(StandardCharsets.UTF_8));
+        String rawSecret = jwtConfig.getSecret();
+        byte[] keyBytes;
+        if (rawSecret == null || rawSecret.isBlank() || rawSecret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            // RFC7518 §3.2：HS256/HS384/HS512 要求密钥 >= 对应哈希输出长度（256/384/512 bits）
+            // 这里直接生成 512 bits = 64 字节的安全随机密钥，适配 HS512
+            log.warn("【JWT】jwt.secret 未配置或长度不足（<32字节），自动生成一次性随机密钥。" +
+                    "注意：服务重启后已签发的 Token 将全部失效！生产环境请通过 JWT_SECRET 环境变量配置固定密钥。");
+            SecureRandom sr = new SecureRandom();
+            byte[] randomBytes = new byte[64];
+            sr.nextBytes(randomBytes);
+            keyBytes = randomBytes;
+            log.info("【JWT】自动生成的随机密钥 Base64 摘要: {}",
+                    Base64.getEncoder().withoutPadding().encodeToString(keyBytes).substring(0, 12) + "...");
+        } else {
+            keyBytes = rawSecret.getBytes(StandardCharsets.UTF_8);
+        }
+        this.secretKey = Keys.hmacShaKeyFor(keyBytes);
     }
     
     /**

@@ -85,11 +85,6 @@ const routes = [
     component: () => import('../views/Learning/TutorialsPage.vue')
   },
   {
-    path: '/tips',
-    name: 'tips',
-    component: () => import('../views/Learning/TipsPage.vue')
-  },
-  {
     path: '/gallery',
     name: 'gallery',
     component: () => import('../views/Learning/GalleryPage.vue')

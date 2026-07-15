@@ -39,7 +39,7 @@ public class Gear {
     @Column(length = 500)
     private String description;
 
-    @Column(length = 255)
+    @Column(columnDefinition = "TEXT")
     private String imageUrl;
 
     @Column(length = 50)

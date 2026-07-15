@@ -12,14 +12,9 @@
           <li><router-link to="/photo-score">照片打分</router-link></li>
           <li><router-link to="/gear">器材选购</router-link></li>
           <li><router-link to="/chat">AI问答</router-link></li>
-        </ul>
-      </div>
-      <div class="footer-section">
-        <h4>关于我们</h4>
-        <ul>
-          <li><a href="#">联系我们</a></li>
-          <li><a href="#">使用条款</a></li>
-          <li><a href="#">隐私政策</a></li>
+          <li><router-link to="/retouch">修图建议</router-link></li>
+          <li><router-link to="/tutorials">入门教程</router-link></li>
+          <li><router-link to="/gallery">作品赏析</router-link></li>
         </ul>
       </div>
     </div>

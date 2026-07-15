@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "Continue"
+﻿﻿$ErrorActionPreference = "Continue"
 
 function Stop-Port {
     param(

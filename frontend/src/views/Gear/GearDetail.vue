@@ -213,21 +213,21 @@ const relatedGear = [
     brand: '索尼',
     model: '85mm f/1.4 GM',
     price: 11999,
-    imageUrl: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=sony%2085mm%20f1.4%20gm%20lens%20product&image_size=square'
+    imageUrl: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=Sony%2085mm%20f1.4%20GM%20portrait%20prime%20lens%20product%20white%20bg&image_size=square'
   },
   {
     id: 7,
     brand: '尼康',
     model: '24-70mm f/2.8 S',
     price: 14999,
-    imageUrl: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=nikon%2024-70mm%20f2.8%20lens%20product&image_size=square'
+    imageUrl: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=Nikon%2024-70mm%20f2.8%20S%20zoom%20lens%20product%20photo%20white%20bg&image_size=square'
   },
   {
     id: 6,
     brand: '佳能',
     model: '50mm f/1.8 STM',
     price: 699,
-    imageUrl: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=canon%2050mm%20f1.8%20lens%20product&image_size=square'
+    imageUrl: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=Canon%2050mm%20f1.8%20STM%20nifty%20fifty%20lens%20product%20photo&image_size=square'
   }
 ]
 

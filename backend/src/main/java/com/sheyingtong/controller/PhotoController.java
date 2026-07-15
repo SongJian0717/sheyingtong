@@ -5,6 +5,9 @@ import com.sheyingtong.dto.response.PhotoScoreResponse;
 import com.sheyingtong.entity.PhotoAnalysis;
 import com.sheyingtong.entity.User;
 import com.sheyingtong.service.PhotoService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -24,6 +27,7 @@ import java.io.File;
 import java.net.URLEncoder;
 import java.util.Map;
 
+@Tag(name = "AI照片打分", description = "上传照片进行AI六维度评分（构图/光线/色彩/对焦/内容/建议），基于Qwen-VL-Flash多模态模型")
 @RestController
 @RequestMapping("/api/photo")
 @RequiredArgsConstructor
@@ -31,9 +35,12 @@ public class PhotoController {
     
     private final PhotoService photoService;
     
+    @Operation(summary = "AI照片打分", description = "上传照片后由AI进行六维度评分：构图、光线、色彩、对焦、内容、综合建议。每个维度80-120字详细评语。【需登录】")
     @PostMapping("/score")
     public ApiResponse<PhotoScoreResponse> scorePhoto(
+            @Parameter(description = "照片文件（jpg/png/webp）", required = true)
             @RequestParam("file") MultipartFile file,
+            @Parameter(description = "可选：用户对照片的补充描述，帮助AI更精准评价")
             @RequestParam(value = "description", required = false) String description) {
         
         if (file.isEmpty()) {
@@ -45,10 +52,11 @@ public class PhotoController {
         return ApiResponse.success(response);
     }
     
+    @Operation(summary = "获取打分历史记录", description = "分页返回当前用户的所有照片打分记录（按时间倒序）。【需登录】")
     @GetMapping("/history")
     public ApiResponse<Page<PhotoAnalysis>> getHistory(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
+            @Parameter(description = "页码（从0开始）") @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "每页大小") @RequestParam(defaultValue = "10") int size) {
         
         String username = getCurrentUsername();
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -56,8 +64,11 @@ public class PhotoController {
         return ApiResponse.success(history);
     }
     
+    @Operation(summary = "获取打分详情", description = "根据记录ID获取单条打分的完整六维度评分和建议详情。【公开接口】")
     @GetMapping("/detail/{id}")
-    public ApiResponse<PhotoScoreResponse> getDetail(@PathVariable Long id) {
+    public ApiResponse<PhotoScoreResponse> getDetail(
+            @Parameter(description = "打分记录ID", required = true)
+            @PathVariable Long id) {
         PhotoAnalysis analysis = photoService.getAnalysisById(id);
         if (analysis == null) {
             return ApiResponse.error("记录不存在");
@@ -85,8 +96,11 @@ public class PhotoController {
         }
     }
     
+    @Operation(summary = "删除打分记录", description = "删除指定ID的照片打分记录（同时删除磁盘上的图片文件）。【需登录】")
     @DeleteMapping("/{id}")
-    public ApiResponse<Void> deleteAnalysis(@PathVariable Long id) {
+    public ApiResponse<Void> deleteAnalysis(
+            @Parameter(description = "打分记录ID", required = true)
+            @PathVariable Long id) {
         PhotoAnalysis analysis = photoService.getAnalysisById(id);
         if (analysis == null) {
             return ApiResponse.error("记录不存在");
@@ -96,8 +110,11 @@ public class PhotoController {
         return ApiResponse.success(null);
     }
     
+    @Operation(summary = "获取打分照片原图", description = "返回原始上传的照片二进制流（内联显示）。用于历史记录卡片展示缩略图。【公开接口】")
     @GetMapping("/image/{id}")
-    public ResponseEntity<Resource> getImage(@PathVariable Long id) {
+    public ResponseEntity<Resource> getImage(
+            @Parameter(description = "打分记录ID", required = true)
+            @PathVariable Long id) {
         PhotoAnalysis analysis = photoService.getAnalysisById(id);
         if (analysis == null) {
             return ResponseEntity.notFound().build();

@@ -59,6 +59,9 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 // Step 4：URL 权限分层（从上到下匹配，顺序敏感，具体在前，兜底在后）
                 .authorizeHttpRequests(auth -> auth
+                        // ---------- Swagger / OpenAPI 文档静态资源 ----------
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        .requestMatchers("/swagger-resources/**", "/webjars/**").permitAll()
                         // ---------- 无需登录的公开接口 ----------
                         .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
                         .requestMatchers("/api/dictionary/**").permitAll()

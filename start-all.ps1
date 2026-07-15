@@ -1,4 +1,4 @@
-﻿$projectDir = $PSScriptRoot
+﻿﻿$projectDir = $PSScriptRoot
 $ErrorActionPreference = "Continue"
 
 function Kill-Port {

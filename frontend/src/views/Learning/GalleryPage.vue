@@ -142,10 +142,6 @@ const paramLabels = {
   flash: '闪光灯'
 }
 
-const createImageUrl = (prompt) => {
-  return `https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=${encodeURIComponent(prompt)}&image_size=landscape_16_9`
-}
-
 const works = ref([
   {
     id: 1,
@@ -154,7 +150,7 @@ const works = ref([
     title: '黄昏下的少女',
     author: '林慕青',
     rating: 9.2,
-    image: createImageUrl('beautiful cinematic portrait photography of a young woman standing in a golden wheat field during sunset golden hour, warm backlight creating glowing hair rim light, soft bokeh background, professional medium format portrait photography, emotional mood, depth of field'),
+    image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=beautiful%20cinematic%20portrait%20photography%20of%20a%20young%20woman%20standing%20in%20a%20golden%20wheat%20field%20during%20sunset%20golden%20hour%2C%20warm%20backlight%20creating%20glowing%20hair%20rim%20light%2C%20soft%20bokeh%20background%2C%20professional%20medium%20format%20portrait%20photography%2C%20emotional%20mood%2C%20depth%20of%20field&image_size=landscape_16_9',
     params: {
       camera: 'Sony A7R V',
       lens: 'Sony FE 85mm f/1.4 GM',
@@ -196,7 +192,7 @@ const works = ref([
     title: '雪山之镜',
     author: '张远山',
     rating: 9.5,
-    image: createImageUrl('epic landscape photography of snow capped mountain range with perfect reflection in a calm alpine lake at sunrise, dramatic pink and orange clouds, golden first light on peaks, crystal clear water reflection, wide angle, medium format, professional nature photography'),
+    image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=epic%20landscape%20photography%20of%20snow%20capped%20mountain%20range%20with%20perfect%20reflection%20in%20a%20calm%20alpine%20lake%20at%20sunrise%2C%20dramatic%20pink%20and%20orange%20clouds%2C%20golden%20first%20light%20on%20peaks%2C%20crystal%20clear%20water%20reflection%2C%20wide%20angle%2C%20medium%20format%2C%20professional%20nature%20photography&image_size=landscape_16_9',
     params: {
       camera: 'Fujifilm GFX 100 II',
       lens: 'GF 23mm f/4 R LM WR',
@@ -238,7 +234,7 @@ const works = ref([
     title: '雨中的红伞',
     author: '陈一格',
     rating: 9.0,
-    image: createImageUrl('cinematic street photography on a rainy day in Shanghai old street, a person holding a vibrant red umbrella walking, wet pavement reflection of neon lights, black and white desaturated except red color accent, moody atmospheric, shallow depth of field, Leica photography style'),
+    image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=cinematic%20street%20photography%20on%20a%20rainy%20day%20in%20Shanghai%20old%20street%2C%20a%20person%20holding%20a%20vibrant%20red%20umbrella%20walking%2C%20wet%20pavement%20reflection%20of%20neon%20lights%2C%20black%20and%20white%20desaturated%20except%20red%20color%20accent%2C%20moody%20atmospheric%2C%20shallow%20depth%20of%20field%2C%20Leica%20photography%20style&image_size=landscape_16_9',
     params: {
       camera: 'Leica Q3',
       lens: 'Summilux 28mm f/1.7 内置',
@@ -280,7 +276,7 @@ const works = ref([
     title: '银河下的守望者',
     author: '赵星辰',
     rating: 9.3,
-    image: createImageUrl('stunning astrophotography of a person standing under a bright milky way galaxy arch over mountains, long exposure night photography, dark foreground with silhouette, vivid purple and blue galactic core, stars and shooting stars, wide angle landscape photography'),
+    image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=stunning%20astrophotography%20of%20a%20person%20standing%20under%20a%20bright%20milky%20way%20galaxy%20arch%20over%20mountains%2C%20long%20exposure%20night%20photography%2C%20dark%20foreground%20with%20silhouette%2C%20vivid%20purple%20and%20blue%20galactic%20core%2C%20stars%20and%20shooting%20stars%2C%20wide%20angle%20landscape%20photography&image_size=landscape_16_9',
     params: {
       camera: 'Canon EOS R5',
       lens: 'RF 15-35mm f/2.8 L IS USM',
@@ -322,7 +318,7 @@ const works = ref([
     title: '几何与光',
     author: '苏明远',
     rating: 8.9,
-    image: createImageUrl('minimalist architectural photography of a modern concrete building with strong geometric lines and dramatic shadows, black and white photography, contrasty hard light, repeating patterns, perspective lines, Leica architecture photography style, clean composition'),
+    image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=minimalist%20architectural%20photography%20of%20a%20modern%20concrete%20building%20with%20strong%20geometric%20lines%20and%20dramatic%20shadows%2C%20black%20and%20white%20photography%2C%20contrasty%20hard%20light%2C%20repeating%20patterns%2C%20perspective%20lines%2C%20Leica%20architecture%20photography%20style%2C%20clean%20composition&image_size=landscape_16_9',
     params: {
       camera: 'Sony A7 IV',
       lens: 'Sony FE 24-70mm f/2.8 GM II',
@@ -364,7 +360,7 @@ const works = ref([
     title: '她的房间',
     author: '周小雅',
     rating: 8.8,
-    image: createImageUrl('beautiful cinematic indoor natural light portrait of a young woman sitting by a large window reading a book, soft diffused daylight, cozy atmosphere, film grain aesthetic, warm tones, shallow depth of field, 35mm lifestyle photography'),
+    image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=beautiful%20cinematic%20indoor%20natural%20light%20portrait%20of%20a%20young%20woman%20sitting%20by%20a%20large%20window%20reading%20a%20book%2C%20soft%20diffused%20daylight%2C%20cozy%20atmosphere%2C%20film%20grain%20aesthetic%2C%20warm%20tones%2C%20shallow%20depth%20of%20field%2C%2035mm%20lifestyle%20photography&image_size=landscape_16_9',
     params: {
       camera: 'Nikon Z f',
       lens: 'Nikkor Z 35mm f/1.4 S',
