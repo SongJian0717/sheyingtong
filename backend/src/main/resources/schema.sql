@@ -43,16 +43,12 @@ ALTER TABLE retouch_suggestions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4
 --
 -- 👉 清理方法（只需执行一次！以后不要再跑，否则会丢失你手动新增的术语）：
 --
---    方案 A · 一键脚本（最推荐，自动停止后端+改字符集+清表+重启）：
---      在项目根目录打开 PowerShell，运行：
---        powershell -ExecutionPolicy Bypass -File .\fix-dictionary-encoding.ps1
---
---    方案 B · 手动命令行清理：
---      在 PowerShell / CMD 执行：
---        mysql -uroot -p123456 sheyingtong -e "TRUNCATE photography_terms;"
+--    方案 A · 命令行清理：
+--      在 PowerShell / CMD 执行（替换为你本机的 DB 账号密码）：
+--        mysql -u<DB_USER> -p<DB_PASSWORD> sheyingtong -e "TRUNCATE photography_terms;"
 --      然后重启后端 → data.sql 会自动重新插入 50 条干净术语。
 --
---    方案 C · 图形化工具清理：
+--    方案 B · 图形化工具清理：
 --      打开 Navicat / DBeaver / Workbench → 连 sheyingtong →
 --      右键 photography_terms 表 → 截断表(TRUNCATE) → 确认 →
 --      重启 Spring Boot 后端即可。

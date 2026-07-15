@@ -115,6 +115,9 @@ test_photo*.jpg
 test_photo*.png
 check-chroma.py
 start-chroma.py
+fix-dictionary-encoding.ps1
+docs/rename-screenshots.ps1
+docs/README.md
 # ---------- 一键修复脚本产生的服务日志（含API Key等敏感信息，禁止提交） ----------
 logs/
 *.log
