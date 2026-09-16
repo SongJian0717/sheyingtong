@@ -4,11 +4,14 @@
 ![Vue](https://img.shields.io/badge/Vue-3.5.13-4FC08D?style=flat-square&logo=vue.js)
 ![JDK](https://img.shields.io/badge/JDK-17-F80000?style=flat-square&logo=oracle)
 ![MySQL](https://img.shields.io/badge/MySQL-8-4479A1?style=flat-square&logo=mysql)
+![Redis](https://img.shields.io/badge/Redis-7.x-DC382D?style=flat-square&logo=redis)
+![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3.13-FF6600?style=flat-square&logo=rabbitmq)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)
 ![Version](https://img.shields.io/badge/Version-1.0.0-green.svg?style=flat-square)
 
 > 基于 **通义千问 LLM + RAG 检索增强 + Qwen-VL 多模态图像理解** 的一站式摄影学习助手。
-> 用 AI 降低摄影学习门槛：从入门教程 → 术语词典 → 器材推荐 → 你的照片 6 维打分 → 修图建议与实时对比，全流程覆盖。
+> 用 AI 降低摄影学习门槛：从入门教程 → 术语词典 → 器材推荐 → 你的照片 6 维打分 → 修图建议与实时对比 → 作品社区分享，全流程覆盖。
 
 ---
 
@@ -47,13 +50,14 @@
 | 图标 | 模块 | 核心能力 |
 | :--: | :--: | :------- |
 | 🤖 | **AI 摄影问答** | 接入 Qwen-Turbo 大模型 + **LangChain4j Function Calling**（查词典 / 计算曝光三角 / 查器材 3 个内置工具），支持 SSE 流式打字机效果，首字响应 < 1s |
-| 🖼️ | **照片 6 维度打分** | **Qwen-VL-Plus 多模态** 分析：构图/光线/色彩/对焦/内容/综合 6 维度评分 + 评语 + 改进建议，雷达图直观展示 |
+| 🖼️ | **照片 6 维度打分** | **Qwen-VL-Plus 多模态** 分析：构图/光线/色彩/对焦/内容/综合 6 维度评分 + 评语 + 改进建议，雷达图直观展示；长任务走 **RabbitMQ 异步队列**，提交后轮询任务状态，失败自动重试 / 降级 |
 | 🎨 | **修图建议 & 实时对比** | LLM 返回 8 个滤镜参数（亮度/对比度/饱和度/色相/模糊/复古/灰度/透明度），前端 Canvas 实时渲染，可拖拽滑块对比原图 / 修图效果，附带至少 5 步具体修图流程 |
 | 📚 | **RAG 知识增强问答** | 200+ 摄影术语 → 本地 Embedding 服务向量化 → 存入 **ChromaDB 向量数据库**，问答时 Top-K 余弦相似度召回专业知识，**解决 LLM 幻觉率从 40% 降低到 15% 以下** |
 | 📖 | **摄影术语词典** | 中文术语/英文术语/别名搜索，卡片式展示定义 + 示例 + 相关知识，完全公开无需登录 |
 | 📷 | **器材智能推荐** | 按品牌/类型/预算范围过滤，卡片展示价格/参数/适用人群，给新手最清晰的购机决策 |
 | 🎓 | **学习资源** | 3 大板块联动：<br>📘 入门教程（6 章互动手风琴 + 进度跟踪）<br>💡 摄影技巧（8 类场景 12+ 详细技巧 + 参数推荐卡）<br>🖼️ 作品赏析（6 幅精选作品 + 技术参数 + 专家点评模态对话框） |
 | 🔐 | **用户体系** | Spring Security 6 + **JWT(HS512) + BCrypt** 密码哈希，无状态鉴权；支持注册/登录/头像上传/修改密码/用户统计；Token 过期前端自动弹登录框；DELETE / 上传 / 聊天 / 打分全部需认证 |
+| 📡 | **摄影社区** | 作品发布 + 动态 Feed + 关注/取关 + 点赞 + 评论，个人主页与作品墙，游标分页滚动加载；Feed 热点数据走 **Redis 缓存** |
 
 
 
@@ -62,26 +66,26 @@
 ```
                          ┌───────────────────────────────────────────────────────┐
                          │             前端 Vue 3.5 + Element Plus 2.14          │
-                         │  (12 页面 · Pinia 3 · Vite 6 Proxy 5173 → 8080)      │
-                         │  LoginPage / ChatPage / PhotoScorePage / RetouchPage  │
-                         │  DictionaryPage / GearRecommendPage / TutorialsPage … │
+                         │  (16 页面 · Pinia 3 · Vite 6 Proxy 5173 → 8080)      │
+                         │  FeedPage / WorkDetailPage / UserProfilePage / Chat   │
+                         │  PhotoScore / Retouch / Dictionary / Gear / 学习      │
                          └──────────────────────────┬────────────────────────────┘
                                             HTTP/REST · JWT Bearer Header
                          ┌──────────────────────────▼────────────────────────────┐
                          │    Spring Boot 3.2 · Tomcat NIO 8080                  │
                          │  ┌─────────────────────────────────────────────────┐   │
-                         │  │  8 个 REST Controller                           │   │
-                         │  │  Auth · Chat · Photo · Retouch · Gear          │   │
-                         │  │  Dictionary · Upload · Rag (RAG 同步/搜索)     │   │
+                         │  │  12 个 REST Controller                          │   │
+                         │  │  Auth / Chat / Photo / Retouch / Gear / Dict    │  │
+                         │  │  Upload/Rag/Work/Feed/UserSocial/AiTask         │  │
                          │  └───────────────────────┬─────────────────────────┘   │
                          │                          │ Service 层                  │
-                         │   ChatService · AIService(多模态) · PhotoService      │
-                         │   RetouchService · AuthService · RagService …        │
+                         │   ChatService · AIService · PhotoService · Retouch    │
+                         │   CommunityService · AiTaskService · CacheService    │
                          │  ┌───────────────────────▼─────────────────────────┐   │
                          │  │   LangChain4j AiServices                        │   │
                          │  │   ├── PhotographyAssistant (Function Calling)   │   │
                          │  │   ├── @Tool PhotographyTools (3 个工具函数)     │   │
-                         │  │   ├── RedisChatMemoryStore (会话记忆 TTL)       │   │
+                         │  │   ├── Redis 缓存层 · RabbitMQ 异步任务队列      │   │
                          │  │   └── RagContentRetriever (Chroma Top-K 召回)   │   │
                          │  └───────────────────────┬─────────────────────────┘   │
                          │                          │                             │
@@ -90,7 +94,7 @@
                             │                  │               │
                    ┌────────▼──────┐  ┌───────▼────────┐  ┌──▼──────────────────────┐
                    │   MySQL 8.0+  │  │  Redis 7.x     │  │  ChromaDB + Embedding   │
-                   │  9 张业务表   │  │  会话记忆缓存   │  │  200+ 摄影词典向量检索 │
+                   │  13 张业务表  │  │  会话记忆缓存   │  │  200+ 摄影词典向量检索 │
                    │  JPA ddl-auto │  │  LangChain4j   │  │  余弦相似度 Top-K       │
                    │  update 自动建│  │  集成          │  │  RAG 知识增强          │
                    └───────────────┘  └────────────────┘  └────────────┬───────────┘
@@ -175,11 +179,30 @@ CREATE DATABASE IF NOT EXISTS sheyingtong
 | ⚙️  后端 Spring Boot    | **8080** | http://localhost:8080 |
 | 📚 ChromaDB 向量库      | 8000  | （可缺省，仅 RAG 需要） |
 | 🧮 Local Embedding      | 8001  | （可缺省，仅 RAG 需要） |
+| 🐇 RabbitMQ（docker 拉起） | 15672 | Management UI；本机装有 Docker 才会启动 |
 
 > 💡 首次启动时，后端会下载 maven 依赖（约 3 分钟），前端 `npm install` 约 2~3 分钟。请耐心等待。
 > 脚本自带 `Import-UserEnvVars`，启动时自动把第 3 步设置的用户级环境变量注入进程，不用每次都 `$env:` 手动指定。
 
-### 6. 手动启动（不想用一键脚本）
+### 6. Docker 一键部署（服务器 / 生产）
+
+> 仓库内置完整的 Compose 编排（核心档：MySQL + Redis + RabbitMQ + 后端 + 前端），服务器上装好 Docker 即可一条命令拉起，完整手册见 [docs/Docker部署.md](docs/Docker部署.md)。
+
+```bash
+# 1）准备环境变量（必填 3 项：QWEN_API_KEY / JWT_SECRET / DB_PASSWORD）
+cp .env.example .env
+vi .env
+
+# 2）核心档：MySQL + Redis + RabbitMQ + 后端 + 前端（nginx 80 端口统一入口）
+docker compose up -d --build
+
+# 3）可选 RAG 增强档：叠加 Chroma 向量库 + Qwen3-Embedding 语义检索
+docker compose -f docker-compose.yml -f docker-compose.rag.yml up -d --build
+```
+
+> 访问 `http://<服务器IP>/`：`/api/**` 反代后端 REST + SSE 流式，`/uploads/**` 反代上传图片，其余路径由 nginx 托管前端静态文件（Vue history 路由）。
+
+### 7. 手动启动（不想用一键脚本 / Docker）
 
 **后端（2 个终端，或 Idea）：**
 
@@ -244,11 +267,15 @@ sheyingtong/
 ├── 📁 backend/                              Spring Boot 3.2 后端
 │   ├── 📁 src/main/java/com/sheyingtong/
 │   │   ├── 📁 SheyingtongApplication.java      启动入口（@SpringBootApplication）
-│   │   ├── 📁 controller/                      REST API 入口（8 个）
+│   │   ├── 📁 controller/                      REST API 入口（12 个）
 │   │   │   ├── AuthController.java            登录/注册/用户信息/改密
 │   │   │   ├── ChatController.java            AI 聊天（SSE 流式 + 多模态）
-│   │   │   ├── PhotoController.java           照片打分 + 历史
-│   │   │   ├── RetouchController.java         修图建议 + 历史
+│   │   │   ├── PhotoController.java           照片打分（异步任务）+ 历史
+│   │   │   ├── RetouchController.java         修图建议（异步任务）+ 历史
+│   │   │   ├── AiTaskController.java          AI 任务状态查询 / 失败重试
+│   │   │   ├── WorkController.java            作品发布/删除/点赞/评论
+│   │   │   ├── FeedController.java            动态 Feed 流
+│   │   │   ├── UserSocialController.java      用户主页/粉丝/关注列表
 │   │   │   ├── DictionaryController.java      摄影术语词典
 │   │   │   ├── GearController.java            器材推荐
 │   │   │   ├── UploadController.java          头像/图片上传
@@ -258,21 +285,30 @@ sheyingtong/
 │   │   │   ├── AIService.java                 Qwen-VL-Plus 多模态主调（3次重试）
 │   │   │   ├── PhotoService.java              打分流程 + 压缩 + 降级 mock
 │   │   │   ├── RetouchService.java            修图 8 模块解析 + 参数生成
+│   │   │   ├── AiTaskService.java             异步任务状态机（提交/轮询/重试）
+│   │   │   ├── AiTaskExecutor.java            消费端：执行打分 / 修图任务
+│   │   │   ├── CommunityService.java          社区：Feed / 关注 / 点赞 / 评论
+│   │   │   ├── CacheService.java              Redis 缓存（词典 / 器材 / Feed）
+│   │   │   ├── ImageCompressor.java           图片压缩（短边 1024）
 │   │   │   ├── AuthService.java               注册/登录 + BCrypt 哈希 + JWT 签发
 │   │   │   ├── PhotographyTools.java          @Tool 3 个：查词典/算曝光/搜器材
 │   │   │   └── PhotographyAssistant.java      LangChain4j AiServices 声明式接口
+│   │   ├── 📁 mq/                              RabbitMQ 拓扑（重试 / 死信 / 启动恢复）
 │   │   ├── 📁 security/                        Spring Security 6 + JWT 链路
 │   │   │   ├── SecurityConfig.java            URL 权限分层 + CORS + CSRF 关闭
 │   │   │   ├── JwtAuthenticationFilter.java   Token 解包 → 注入 SecurityContext
 │   │   │   └── JwtUtil.java                   HS512 签发/解析/过期校验
-│   │   ├── 📁 entity/                          9 个 JPA Entity（对应数据库 9 张表）
+│   │   ├── 📁 entity/                          13 个 JPA Entity（对应 13 张表）
 │   │   │   ├── User.java / ChatSession.java / ChatMessage.java
-│   │   │   ├── PhotoAnalysis.java / RetouchRecord.java
+│   │   │   ├── PhotoAnalysis.java / RetouchRecord.java / AiTask.java
 │   │   │   ├── PhotographyTerm.java / Gear.java / GearCategory.java
+│   │   │   ├── Work.java / WorkComment.java / WorkLike.java / Follow.java
 │   │   ├── 📁 repository/                      Spring Data JPA 接口
 │   │   ├── 📁 dto/                             请求/响应 DTO（ApiResponse 统一包装）
 │   │   ├── 📁 config/                          配置类
 │   │   │   ├── JwtConfig.java / RagConfig.java
+│   │   │   ├── RabbitConfig.java               MQ 交换机 / 队列 / 死信声明
+│   │   │   ├── CacheProperties.java / AiAsyncProperties.java / AsyncConfig.java
 │   │   │   └── LocalEmbeddingModel.java        本地 Embedding 客户端
 │   │   └── 📁 exception/                       GlobalExceptionHandler
 │   └── 📁 src/main/resources/application.yml  全部用 ${ENV_VAR:default} 占位
@@ -282,18 +318,20 @@ sheyingtong/
 │   │   ├── 📁 api/                             后端请求封装
 │   │   │   ├── request.js                     axios 单例 + 3 层拦截器
 │   │   │   ├── chat.js                        SSE 流式 XMLHttpRequest（非 axios）
-│   │   │   ├── auth.js / photo.js / retouch.js
+│   │   │   ├── auth.js / photo.js / retouch.js / ai.js
+│   │   │   ├── feed.js / work.js / user.js
 │   │   │   └── dictionary.js / gear.js
-│   │   ├── 📁 views/                           12 个页面
+│   │   ├── 📁 views/                           16 个页面
 │   │   │   ├── Auth/ LoginPage · RegisterPage
 │   │   │   ├── Home/ HomePage
 │   │   │   ├── Chat/ ChatPage                 AI 问答主页（流式打字机）
-│   │   │   ├── PhotoScore/ PhotoScorePage     上传 + 6 维雷达图 + 历史列表
+│   │   │   ├── PhotoScore/ PhotoScorePage     上传 + 6 维雷达图 + 异步任务状态
 │   │   │   ├── Retouch/ RetouchPage           Canvas 滤镜对比 + 修图步骤
 │   │   │   ├── Dictionary/ DictionaryPage     术语搜索 + 卡片详情
 │   │   │   ├── Gear/ GearRecommendPage        器材推荐 + 筛选
 │   │   │   ├── Profile/ ProfilePage           用户中心（头像/密码/统计）
-│   │   │   └── Learning/ TutorialsPage · TipsPage · GalleryPage
+│   │   │   ├── Learning/ TutorialsPage · TipsPage · GalleryPage
+│   │   │   └── Community/ FeedPage · WorkDetailPage · UserProfilePage
 │   │   ├── 📁 components/Layout/               布局组件（AppSidebar 等）
 │   │   ├── 📁 stores/                          Pinia 状态管理（user.js）
 │   │   ├── 📁 router/index.js                  createWebHistory + beforeEach 鉴权
@@ -370,66 +408,43 @@ sheyingtong/
 - **SSE 流式**：走原生 XMLHttpRequest（axios 浏览器端不支持 responseType stream），**手动 setRequestHeader 加 Authorization**（之前丢这个 → 403 的经典坑）。
 - **鉴权守卫**：router.beforeEach → `requiresAuth && !token` → 弹 ElMessageBox 阻止跳转 → 引导去登录。
 
+### 6. 摄影社区（作品 / Feed / 关注 / 点赞 / 评论）
+> 代码入口：[WorkController.java](backend/src/main/java/com/sheyingtong/controller/WorkController.java) / [CommunityService.java](backend/src/main/java/com/sheyingtong/service/CommunityService.java)，表设计见 [docs/社区模块-MySQL设计要点.md](docs/社区模块-MySQL设计要点.md)
+- **作品发布**：图片 + 标题 + 描述，发布后可删除；我发表的作品列表 `/api/works/mine`，公开作品墙 `/api/users/{id}/works`。
+- **动态 Feed**：`/api/feed` 游标分页（`CursorPageResponse`）滚动加载，Feed 热点数据走 Redis 缓存。
+- **社交动作**：关注/取关（唯一索引防重复）、点赞（唯一键防重、可取消）、评论（作者可删除）；接口全在 `/api/works` 与 `/api/users` 下，需登录。
+
+### 7. AI 任务异步化（RabbitMQ）
+> 代码入口：[AiTaskService.java](backend/src/main/java/com/sheyingtong/service/AiTaskService.java) / [AiTaskExecutor.java](backend/src/main/java/com/sheyingtong/service/AiTaskExecutor.java) / [mq/](backend/src/main/java/com/sheyingtong/mq/)，设计文档 [docs/RabbitMQ异步化设计方案.md](docs/RabbitMQ异步化设计方案.md)
+- **流程**：照片打分/修图改为「提交任务 → 投 RabbitMQ 队列 → 消费端执行 → 前端轮询 `/api/ai/tasks/{id}`」；broker 不可达时 `fallback-to-sync` 就地同步执行兜底。
+- **可靠性**：消费失败按 5s × 2ⁿ 指数退避重试（封顶 60s），超限进死信队列 DLX（`AiDeadLetterConsumer`）；启动时 `AiTaskStartupRecovery` 恢复遗留任务。
+- **降级**：最后一次尝试仍失败，`degrade-on-failure=true` 写 mock 结果并把任务标记 DEGRADED，页面永远有数据。
+
+### 8. Redis 缓存层
+> 代码入口：[CacheService.java](backend/src/main/java/com/sheyingtong/service/CacheService.java) / [CacheKeys.java](backend/src/main/java/com/sheyingtong/service/CacheKeys.java)，设计文档 [docs/Redis缓存设计方案.md](docs/Redis缓存设计方案.md)
+- **Tier A 静态知识库**：词典（50 条）+ 器材（36 条）无写入口，整表缓存 12h。
+- **防雪崩 / 防穿透**：TTL 随机抖动 ±10%，空值占位缓冲；全局开关 `app.cache.enabled=false` 可一键短路直查数据库，方便对比压测。
+
 ---
 
 ## 📦 部署说明
 
 ### Docker Compose（生产推荐）
-> 示例配置（新建 `docker-compose.yml` 放根目录）：
 
-```yaml
-version: "3.8"
-services:
-  mysql:
-    image: mysql:8.0
-    container_name: sheyingtong-mysql
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
-      MYSQL_DATABASE: sheyingtong
-    volumes:
-      - ./data/mysql:/var/lib/mysql
+仓库已内置完整的多档 Compose 编排与各服务 `Dockerfile`：
 
-  redis:
-    image: redis:7-alpine
-    container_name: sheyingtong-redis
-    restart: always
+- [docker-compose.yml](docker-compose.yml) — **核心档**：MySQL + Redis + RabbitMQ + 后端 + 前端（nginx 统一 80 入口，`/api/**` 反代 REST + SSE，`/uploads/**` 反代上传图片）
+- [docker-compose.rag.yml](docker-compose.rag.yml) — **RAG 增强档**：叠加 Chroma 向量库 + Qwen3-Embedding 向量服务
+- 后端 / 前端 / vector-service / chroma-service 各带 `Dockerfile` + `.dockerignore`，前端含 [nginx.conf](frontend/nginx.conf)
 
-  chroma:
-    image: chromadb/chroma:0.4
-    container_name: sheyingtong-chroma
-    restart: always
-
-  backend:
-    build: ./backend
-    container_name: sheyingtong-backend
-    restart: always
-    depends_on: [mysql, redis, chroma]
-    environment:
-      SPRING_PROFILES_ACTIVE: prod
-      DB_URL: jdbc:mysql://mysql:3306/sheyingtong?useSSL=false&serverTimezone=Asia/Shanghai
-      DB_USERNAME: root
-      DB_PASSWORD: ${DB_PASSWORD}
-      QWEN_API_KEY: ${QWEN_API_KEY}
-      JWT_SECRET: ${JWT_SECRET}
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./uploads:/app/uploads
-
-  frontend:
-    build: ./frontend
-    container_name: sheyingtong-frontend
-    restart: always
-    depends_on: [backend]
-    ports:
-      - "80:80"
+```bash
+# Linux 服务器上：
+cp .env.example .env        # 必填 QWEN_API_KEY / JWT_SECRET / DB_PASSWORD
+docker compose up -d --build
+# 含 RAG 语义搜索：docker compose -f docker-compose.yml -f docker-compose.rag.yml up -d --build
 ```
 
-Nginx 生产前端容器建议用：
-- 打包 `npm run build` → `dist/` 扔 `/usr/share/nginx/html`
-- `/api` 和 `/uploads` `proxy_pass http://backend:8080`
-- `try_files $uri $uri/ /index.html` 兜底 Vue 的 History 模式刷新 404 问题。
+> 💡 完整手册（服务器配置、数据卷备份、升级重启、FAQ）见 [docs/Docker部署.md](docs/Docker部署.md)；Nginx 的 Vue history 路由与 `/api` 反代均由仓库内 `nginx.conf` 处理，无需手动配置。
 
 ---
 

@@ -70,8 +70,11 @@ replay_pid*
 .env.*
 *.env.local
 
-# 模板文件（留档的示例 env 模板，如果有的话可以保留）
-# !.env.example
+# 模板文件（示例 env 模板，不含密钥，随仓库入库供部署参考）
+!.env.example
+
+# ---------- ZCode 编辑器本地状态 ----------
+.zcode/
 
 # ---------- IDE：JetBrains IntelliJ IDEA ----------
 .idea/
