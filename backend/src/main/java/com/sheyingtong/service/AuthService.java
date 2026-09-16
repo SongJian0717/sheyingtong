@@ -9,6 +9,8 @@ import com.sheyingtong.dto.response.UserStatisticsResponse;
 import com.sheyingtong.repository.ChatSessionRepository;
 import com.sheyingtong.repository.PhotoAnalysisRepository;
 import com.sheyingtong.repository.RetouchRecordRepository;
+import com.sheyingtong.repository.FollowRepository;
+import com.sheyingtong.repository.WorkRepository;
 import com.sheyingtong.entity.User;
 import com.sheyingtong.repository.UserRepository;
 import com.sheyingtong.util.JwtUtil;
@@ -27,6 +29,8 @@ public class AuthService {
     private final PhotoAnalysisRepository photoAnalysisRepository;
     private final ChatSessionRepository chatSessionRepository;
     private final RetouchRecordRepository retouchRecordRepository;
+    private final WorkRepository workRepository;
+    private final FollowRepository followRepository;
     
     @Transactional
     public void register(RegisterRequest request) {
@@ -156,6 +160,9 @@ public class AuthService {
                 .totalRetouchRecords(totalRetouchRecords)
                 .totalScoreRecords(totalScoreRecords)
                 .joinDate(user.getCreatedAt().toLocalDate().toString())
+                .worksCount(workRepository.countPublicWorks(user.getId()))
+                .followersCount(followRepository.countByFolloweeId(user.getId()))
+                .followingCount(followRepository.countByFollowerId(user.getId()))
                 .build();
     }
 }

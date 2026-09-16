@@ -1,41 +1,80 @@
 package com.sheyingtong.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.sheyingtong.config.CacheProperties;
 import com.sheyingtong.entity.Gear;
 import com.sheyingtong.entity.GearCategory;
 import com.sheyingtong.repository.GearCategoryRepository;
 import com.sheyingtong.repository.GearRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
+/**
+ * 器材选购：产品库只有 36 条、分类 6 条，且没有任何写入口，同样属于静态知识库。
+ * 整表缓存后在内存完成搜索/筛选/排序/分页，AI 工具链（{@link PhotographyTools}）复用同一份缓存。
+ */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class GearService {
-    
+
+    private static final TypeReference<List<Gear>> GEAR_TYPE = new TypeReference<>() {
+    };
+    private static final TypeReference<List<GearCategory>> CATEGORY_TYPE = new TypeReference<>() {
+    };
+    private static final TypeReference<List<String>> BRANDS_TYPE = new TypeReference<>() {
+    };
+
+    /** 与原 SQL 的 ORDER BY rating DESC 一致；同分时按 id 升序保证翻页结果稳定 */
+    private static final Comparator<Gear> BY_RATING_DESC =
+            Comparator.comparing(Gear::getRating).reversed().thenComparing(Gear::getId);
+
     private final GearRepository gearRepository;
     private final GearCategoryRepository categoryRepository;
-    
+    private final CacheService cacheService;
+    private final CacheProperties cacheProperties;
+
     public Page<Gear> searchGear(String keyword, Long categoryId, String brand,
-                                  BigDecimal minPrice, BigDecimal maxPrice, 
+                                  BigDecimal minPrice, BigDecimal maxPrice,
                                   Pageable pageable) {
-        return gearRepository.search(keyword, categoryId, brand, minPrice, maxPrice, pageable);
+        List<Gear> matched = allGear().stream()
+                .filter(gear -> keyword == null
+                        || containsIgnoreCase(gear.getBrand(), keyword)
+                        || containsIgnoreCase(gear.getModel(), keyword))
+                .filter(gear -> categoryId == null
+                        || (gear.getCategory() != null && categoryId.equals(gear.getCategory().getId())))
+                .filter(gear -> brand == null || containsIgnoreCase(gear.getBrand(), brand))
+                .filter(gear -> minPrice == null || gear.getPrice().compareTo(minPrice) >= 0)
+                .filter(gear -> maxPrice == null || gear.getPrice().compareTo(maxPrice) <= 0)
+                .sorted(BY_RATING_DESC)
+                .toList();
+        return pageOf(matched, pageable);
     }
-    
+
     public Gear getGearDetail(Long id) {
-        return gearRepository.findById(id)
+        return allGear().stream()
+                .filter(gear -> id != null && id.equals(gear.getId()))
+                .findFirst()
                 .orElseThrow(() -> new RuntimeException("器材不存在"));
     }
-    
+
     public Map<String, Object> getRecommendations(BigDecimal minBudget, BigDecimal maxBudget,
                                                    String subject, String level, String brand, String type) {
-        List<Gear> allGear = gearRepository.findAll();
+        List<Gear> allGear = allGear();
         List<Gear> filteredGear = allGear.stream()
                 .filter(g -> minBudget == null || g.getPrice().compareTo(minBudget) >= 0)
                 .filter(g -> maxBudget == null || g.getPrice().compareTo(maxBudget) <= 0)
@@ -135,14 +174,90 @@ public class GearService {
     }
     
     public List<GearCategory> getCategories() {
-        return categoryRepository.findAll();
+        List<GearCategory> categories = cacheService.getOrLoad(
+                CacheKeys.GEAR_CATEGORIES,
+                cacheProperties.getGearTtl(),
+                CATEGORY_TYPE,
+                this::loadCategoriesFromDatabase);
+        return categories == null ? List.of() : categories;
     }
     
     public List<String> getBrands() {
-        return gearRepository.findDistinctBrands();
+        List<String> brands = cacheService.getOrLoad(
+                CacheKeys.GEAR_BRANDS,
+                cacheProperties.getGearTtl(),
+                BRANDS_TYPE,
+                this::loadBrandsFromDatabase);
+        return brands == null ? List.of() : brands;
     }
     
     public List<Gear> getPopularGear() {
-        return gearRepository.findTop6ByOrderByRatingDesc();
+        return allGear().stream()
+                .sorted(BY_RATING_DESC)
+                .limit(6)
+                .toList();
+    }
+
+    // ===================== 供 AI 工具链复用 =====================
+
+    /** 对应原 gearRepository.searchByKeyword：品牌/型号/简介任一命中 */
+    public List<Gear> searchByKeyword(String keyword) {
+        if (keyword == null) {
+            return List.of();
+        }
+        String trimmed = keyword.trim();
+        return allGear().stream()
+                .filter(gear -> containsIgnoreCase(gear.getBrand(), trimmed)
+                        || containsIgnoreCase(gear.getModel(), trimmed)
+                        || containsIgnoreCase(gear.getDescription(), trimmed))
+                .toList();
+    }
+
+    /** 对应原 gearRepository.findByPriceRange：价格区间内按价格升序 */
+    public List<Gear> findByPriceRange(BigDecimal minPrice, BigDecimal maxPrice) {
+        return allGear().stream()
+                .filter(gear -> minPrice == null || gear.getPrice().compareTo(minPrice) >= 0)
+                .filter(gear -> maxPrice == null || gear.getPrice().compareTo(maxPrice) <= 0)
+                .sorted(Comparator.comparing(Gear::getPrice))
+                .toList();
+    }
+
+    // ===================== 缓存载入 =====================
+
+    private List<Gear> allGear() {
+        List<Gear> gears = cacheService.getOrLoad(
+                CacheKeys.GEAR_ALL,
+                cacheProperties.getGearTtl(),
+                GEAR_TYPE,
+                this::loadGearFromDatabase);
+        return gears == null ? List.of() : gears;
+    }
+
+    private List<Gear> loadGearFromDatabase() {
+        log.info("[gear] 器材缓存未命中，回源加载全表");
+        // 按 id 升序缓存：与改造前 findAll() 的自然顺序一致，让"同评分器材"的先后顺序保持稳定
+        return new ArrayList<>(gearRepository.findAll(Sort.by(Sort.Direction.ASC, "id")));
+    }
+    
+    private List<GearCategory> loadCategoriesFromDatabase() {
+        log.info("[gear] 分类缓存未命中，回源加载全表");
+        return new ArrayList<>(categoryRepository.findAll());
+    }
+
+    private List<String> loadBrandsFromDatabase() {
+        log.info("[gear] 品牌缓存未命中，回源加载去重品牌");
+        return new ArrayList<>(gearRepository.findDistinctBrands());
+    }
+
+    // ===================== 内存分页/匹配 =====================
+
+    private static <T> Page<T> pageOf(List<T> source, Pageable pageable) {
+        int from = (int) Math.min(pageable.getOffset(), source.size());
+        int to = (int) Math.min((long) from + pageable.getPageSize(), source.size());
+        return new PageImpl<>(source.subList(from, to), pageable, source.size());
+    }
+
+    private static boolean containsIgnoreCase(String source, String keyword) {
+        return source != null && source.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT));
     }
 }

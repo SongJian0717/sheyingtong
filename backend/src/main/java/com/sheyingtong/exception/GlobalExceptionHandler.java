@@ -95,6 +95,19 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(400, "上传文件大小超过限制（最大50MB）"));
     }
     
+    /**
+     * AI 任务队列不可用（broker 挂了且未开启同步降级）
+     * ----------------------------------------------------------------
+     * 单独处理是为了返回 503 而不是落到 RuntimeException 的关键词规则里被判成 400/500：
+     * 客户端没做错任何事，是服务端依赖暂时不可用。
+     */
+    @ExceptionHandler(AiServiceUnavailableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAiServiceUnavailableException(AiServiceUnavailableException ex) {
+        log.error("AI 任务队列不可用: {}", ex.getMessage(), ex);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiResponse.error(503, ex.getMessage()));
+    }
+    
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleException(Exception ex) {
         log.error("未捕获异常: {}", ex.getMessage(), ex);

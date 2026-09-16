@@ -6,3 +6,4 @@ accelerate
 numpy>=1.24.0
 pydantic==2.9.0
 python-multipart==0.0.12
+sentence-transformers>=3.0.0

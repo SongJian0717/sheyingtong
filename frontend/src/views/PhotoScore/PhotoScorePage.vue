@@ -48,13 +48,28 @@
             type="primary"
             size="large"
             :loading="isAnalyzing"
-            :disabled="!uploadedFile"
+            :disabled="!uploadedFile || taskPending"
             @click="analyzePhoto"
           >
-            {{ isAnalyzing ? '分析中...' : '开始分析' }}
+            {{ isAnalyzing ? '提交中...' : '开始分析' }}
           </el-button>
         </div>
       </el-card>
+    </div>
+    
+    <!-- AI 异步任务状态：排队/分析中/失败/降级都在这里展示；SUCCESS 时不显示（直接看结果） -->
+    <div v-if="taskStatus && taskStatus !== 'SUCCESS'" class="task-status-card" :class="['task-' + taskStatus.toLowerCase()]">
+      <div class="task-status-inner">
+        <el-icon v-if="taskPending" class="task-icon is-loading"><Loading /></el-icon>
+        <el-icon v-else class="task-icon warn"><WarningFilled /></el-icon>
+        <div class="task-status-body">
+          <div class="task-status-title">{{ taskProgressText }}</div>
+          <div v-if="taskErrorMessage" class="task-status-error">{{ taskErrorMessage }}</div>
+          <div v-if="taskRetryable" class="task-status-actions">
+            <el-button size="small" type="primary" @click="retryTask">重试</el-button>
+          </div>
+        </div>
+      </div>
     </div>
     
     <div v-if="analysisResult" class="result-section">
@@ -121,8 +136,14 @@
               <span class="history-level" :class="getScoreClass(item.score)">{{ getScoreLevel(item.score) }}</span>
               <span class="history-date">{{ formatDate(item.createdAt) }}</span>
             </div>
-            <div class="history-overlay">
-              <span class="view-text">查看详情</span>
+            <div class="history-overlay" @click.stop.prevent>
+              <template v-if="isPublished(item.id)">
+                <span class="publish-state published">✓ 已发布到广场</span>
+              </template>
+              <template v-else>
+                <span class="view-text" @click="viewHistoryDetail(item)">查看详情</span>
+                <span class="publish-btn" @click="openPublishDialog(item)">发布到广场</span>
+              </template>
             </div>
           </div>
           <button class="delete-btn" @click.stop="deleteRecord(item.id)">
@@ -145,13 +166,60 @@
         />
       </div>
     </div>
+
+    <!-- 发布到作品广场 -->
+    <el-dialog
+      v-model="publishDialogVisible"
+      title="发布到作品广场"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <div class="publish-preview">
+        <img :src="publishPreviewUrl()" alt="作品预览" />
+        <p class="publish-tip">
+          这张照片将作为<strong>公开作品</strong>展示在作品广场，其他用户可以查看、点赞与评论。
+        </p>
+      </div>
+      <el-form label-position="top" class="publish-form">
+        <el-form-item label="作品标题" required>
+          <el-input
+            v-model="publishForm.title"
+            maxlength="100"
+            show-word-limit
+            placeholder="给你的作品起个标题（必填）"
+          />
+        </el-form-item>
+        <el-form-item label="创作说明（可选）">
+          <el-input
+            v-model="publishForm.content"
+            type="textarea"
+            :rows="3"
+            maxlength="5000"
+            placeholder="聊聊拍摄灵感、构图思路或后期方法，让其他摄影师更懂你的作品"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="publishDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="isPublishing"
+          :disabled="!publishForm.title.trim()"
+          @click="confirmPublish"
+        >
+          确认发布
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { UploadFilled, Delete } from '@element-plus/icons-vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { UploadFilled, Delete, Loading, WarningFilled } from '@element-plus/icons-vue'
 import { scorePhoto, getScoreHistory, getPhotoDetail, deleteAnalysis } from '../../api/photo'
+import { getAiTask, retryAiTask } from '../../api/ai'
+import { getMyWorks, publishWork } from '../../api/work'
 import { ElMessageBox, ElMessage } from 'element-plus'
 
 const uploadedFile = ref(null)
@@ -164,6 +232,89 @@ const currentPage = ref(1)
 const pageSize = ref(12)
 const totalElements = ref(0)
 const totalPages = ref(0)
+
+// ---------- AI 异步任务轮询状态 ----------
+// 提交接口现在立即返回 taskId，真正的分析在后台执行；前端轮询 GET /api/ai/tasks/{taskId}
+const AI_TASK_KEY = 'syt_ai_task_score' // sessionStorage 存 taskId：刷新/返回页面后继续轮询同一任务
+const currentTaskId = ref(null)
+const taskStatus = ref(null) // PENDING / RUNNING / SUCCESS / DEGRADED / FAILED / TIMEOUT
+const taskErrorMessage = ref('')
+const taskRetryable = ref(false)
+let pollTimer = null
+let pollStartTime = 0
+
+const POLL_INTERVAL_FAST = 1500 // 前 30 秒 1.5s 一次
+const POLL_INTERVAL_SLOW = 3000 // 之后放慢到 3s
+const POLL_SLOW_AFTER = 30000
+const POLL_CAP = 10 * 60 * 1000 // 10 分钟上限，超时提示可重试
+
+const taskPending = computed(() => taskStatus.value === 'PENDING' || taskStatus.value === 'RUNNING')
+
+const taskProgressText = computed(() => {
+  const map = {
+    PENDING: '任务排队中，等待 AI 分析...',
+    RUNNING: 'AI 正在分析照片，通常需要 30~90 秒...',
+    DEGRADED: 'AI 服务暂不可用，已展示降级建议结果',
+    FAILED: '分析失败，可点击重试',
+    TIMEOUT: '等待结果超时，可点击重试'
+  }
+  return map[taskStatus.value] || taskStatus.value || ''
+})
+
+// 已发布作品集合：photoAnalysisId → true（从"我的作品"拉取，用于禁用重复发布）
+const publishedMap = ref(new Map())
+// 发布弹窗状态
+const publishDialogVisible = ref(false)
+const publishTargetId = ref(null)
+const publishForm = reactive({
+  title: '',
+  content: ''
+})
+const isPublishing = ref(false)
+
+const isPublished = (photoAnalysisId) => publishedMap.value.has(photoAnalysisId)
+
+const publishPreviewUrl = () =>
+  publishTargetId.value ? `/api/photo/image/${publishTargetId.value}` : ''
+
+const loadPublishedWorks = async () => {
+  try {
+    const works = await getMyWorks()
+    const map = new Map()
+    works.forEach((work) => map.set(work.photoAnalysisId, true))
+    publishedMap.value = map
+  } catch (error) {
+    publishedMap.value = new Map()
+  }
+}
+
+const openPublishDialog = (item) => {
+  publishTargetId.value = item.id
+  publishForm.title = ''
+  publishForm.content = ''
+  publishDialogVisible.value = true
+}
+
+const confirmPublish = async () => {
+  const title = publishForm.title.trim()
+  if (!title || !publishTargetId.value) return
+
+  isPublishing.value = true
+  try {
+    await publishWork({
+      photoAnalysisId: publishTargetId.value,
+      title,
+      content: publishForm.content.trim()
+    })
+    publishedMap.value.set(publishTargetId.value, true)
+    publishDialogVisible.value = false
+    ElMessage.success('发布成功，已展示在作品广场')
+  } catch (error) {
+    // 失败提示（如"该照片已发布过"）已由请求拦截器统一弹出
+  } finally {
+    isPublishing.value = false
+  }
+}
 
 const mockAnalysisResult = {
   score: 85,
@@ -223,6 +374,11 @@ const mockHistory = [
 ]
 
 const handleFileChange = (file) => {
+  stopPolling()
+  currentTaskId.value = null
+  taskStatus.value = null
+  taskErrorMessage.value = ''
+  taskRetryable.value = false
   uploadedFile.value = file.raw
   previewUrl.value = URL.createObjectURL(file.raw)
   analysisResult.value = null
@@ -233,6 +389,11 @@ const handleFileRemove = () => {
 }
 
 const clearFile = () => {
+  stopPolling()
+  currentTaskId.value = null
+  taskStatus.value = null
+  taskErrorMessage.value = ''
+  taskRetryable.value = false
   uploadedFile.value = null
   previewUrl.value = ''
   analysisResult.value = null
@@ -244,15 +405,32 @@ const formatFileSize = (bytes) => {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
+const pad = (n) => String(n).padStart(2, '0')
+
+/**
+ * 后端 LocalDateTime 序列化为数组 [年,月,日,时,分,秒]，兼容 ISO 字符串/时间戳/Date
+ */
 const formatDate = (date) => {
-  if (!date) return ''
-  let dateStr = date
-  if (typeof date === 'object') {
-    dateStr = date.toISOString ? date.toISOString() : String(date)
-  } else if (typeof date !== 'string') {
-    dateStr = String(date)
+  if (date === null || date === undefined || date === '') return ''
+
+  if (Array.isArray(date)) {
+    const [y, m, d, h = 0, mi = 0, s = 0] = date
+    if (!y) return ''
+    return `${y}-${pad(m)}-${pad(d)} ${pad(h)}:${pad(mi)}:${pad(s)}`
   }
-  return dateStr.substring(0, 19).replace('T', ' ')
+
+  if (date instanceof Date) {
+    if (Number.isNaN(date.getTime())) return ''
+    return formatDate([date.getFullYear(), date.getMonth() + 1, date.getDate(),
+      date.getHours(), date.getMinutes(), date.getSeconds()])
+  }
+
+  if (typeof date === 'number') {
+    const dt = new Date(date)
+    return formatDate(dt)
+  }
+
+  return String(date).substring(0, 19).replace('T', ' ')
 }
 
 const getIcon = (key) => {
@@ -298,35 +476,120 @@ const parseSuggestions = (suggestions) => {
   return suggestions.split(/[\n、]/).map(s => s.trim()).filter(s => s && s.length > 1)
 }
 
+/**
+ * 提交 AI 打分任务 → 轮询结果
+ * 改造前这个接口要阻塞几十秒到几分钟；现在 POST /photo/score 立即返回 {taskId}，
+ * 真正的分析在后台消费者线程执行，这里轮询 GET /api/ai/tasks/{taskId} 直到终态。
+ */
 const analyzePhoto = async () => {
-  if (!uploadedFile.value) return
-  
+  if (!uploadedFile.value || taskPending.value) return
+
   isAnalyzing.value = true
-  
+  analysisResult.value = null
+  taskStatus.value = 'PENDING'
+  taskErrorMessage.value = ''
+  taskRetryable.value = false
+
   try {
     const response = await scorePhoto(uploadedFile.value, photoDescription.value)
-    
-    analysisResult.value = {
-      score: response.score,
-      analysis: response.analysis,
-      suggestions: parseSuggestions(response.suggestions)
+    currentTaskId.value = response.taskId
+    sessionStorage.setItem(AI_TASK_KEY, String(response.taskId))
+
+    // broker 不可达降级为就地同步执行时：提交返回就是终态，直接渲染，不用等轮询
+    if (response.status === 'SUCCESS' || response.status === 'DEGRADED' || response.status === 'FAILED') {
+      const status = await getAiTask(response.taskId)
+      renderTaskStatus(status)
+    } else {
+      startPolling(response.taskId)
     }
   } catch (error) {
-    console.error('分析失败:', error)
-    analysisResult.value = {
-      score: 75,
-      analysis: {
-        composition: { score: 75, comment: '分析失败，使用默认评估' },
-        lighting: { score: 75, comment: '分析失败，使用默认评估' },
-        color: { score: 75, comment: '分析失败，使用默认评估' },
-        focus: { score: 75, comment: '分析失败，使用默认评估' },
-        content: { score: 75, comment: '分析失败，使用默认评估' },
-        suggestion: { score: 75, comment: '分析失败，请重试' }
-      },
-      suggestions: ['分析失败，请重试', '检查网络连接', '确保图片格式正确']
-    }
+    console.error('提交分析任务失败:', error)
+    taskStatus.value = 'FAILED'
+    taskErrorMessage.value = '任务提交失败，请重试'
   } finally {
     isAnalyzing.value = false
+  }
+}
+
+// ---------- 轮询 ----------
+
+const startPolling = (taskId) => {
+  stopPolling()
+  pollStartTime = Date.now()
+  pollOnce(taskId)
+}
+
+const stopPolling = () => {
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
+const pollOnce = async (taskId) => {
+  const elapsed = Date.now() - pollStartTime
+  if (elapsed > POLL_CAP) {
+    taskStatus.value = 'TIMEOUT'
+    ElMessage.warning('等待结果超时，可点击“重试”继续')
+    return
+  }
+  try {
+    const status = await getAiTask(taskId)
+    renderTaskStatus(status)
+    if (!status.terminal) {
+      const interval = elapsed < POLL_SLOW_AFTER ? POLL_INTERVAL_FAST : POLL_INTERVAL_SLOW
+      pollTimer = setTimeout(() => pollOnce(taskId), interval)
+    }
+  } catch (error) {
+    // 轮询接口偶发失败：退避后继续，不中断等待
+    pollTimer = setTimeout(() => pollOnce(taskId), POLL_INTERVAL_SLOW)
+  }
+}
+
+/** 把任务状态刷新到页面：终态且有 result 时渲染结果（结构与旧同步返回体完全一致） */
+const renderTaskStatus = (status) => {
+  currentTaskId.value = status.taskId
+  taskStatus.value = status.status
+  taskErrorMessage.value = status.errorMessage || ''
+  taskRetryable.value = status.retryable
+  if (status.result) {
+    analysisResult.value = {
+      score: status.result.score,
+      analysis: status.result.analysis,
+      suggestions: parseSuggestions(status.result.suggestions)
+    }
+  }
+}
+
+/** 手动重试 FAILED / DEGRADED 任务（复用已上传的原图，不需要重新上传） */
+const retryTask = async () => {
+  if (!currentTaskId.value) return
+  try {
+    await retryAiTask(currentTaskId.value)
+    taskStatus.value = 'PENDING'
+    taskErrorMessage.value = ''
+    taskRetryable.value = false
+    ElMessage.info('已重新提交任务，等待 AI 分析...')
+    startPolling(currentTaskId.value)
+  } catch (error) {
+    // 失败提示已由请求拦截器统一弹出
+    console.error('重试任务失败:', error)
+  }
+}
+
+/** 页面刷新/返回后：从 sessionStorage 恢复未完成任务继续轮询 */
+const resumePendingTask = async () => {
+  const saved = sessionStorage.getItem(AI_TASK_KEY)
+  if (!saved) return
+  try {
+    const status = await getAiTask(saved)
+    renderTaskStatus(status)
+    if (!status.terminal) {
+      startPolling(saved)
+    }
+  } catch (error) {
+    // 任务不存在/已换用户无权限：清掉残留
+    sessionStorage.removeItem(AI_TASK_KEY)
   }
 }
 
@@ -357,7 +620,7 @@ const handlePageChange = (page) => {
 const deleteRecord = async (id) => {
   try {
     await ElMessageBox.confirm(
-      '确定要删除这条记录吗？删除后无法恢复。',
+      '确定要删除这条打分记录吗？删除后无法恢复。',
       '确认删除',
       {
         confirmButtonText: '确定',
@@ -365,14 +628,18 @@ const deleteRecord = async (id) => {
         type: 'warning'
       }
     )
-    
+  } catch {
+    return
+  }
+
+  try {
     await deleteAnalysis(id)
+    publishedMap.value.delete(id)
     ElMessage.success('删除成功')
     loadHistory()
   } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error('删除失败')
-    }
+    // 已发布为作品的记录无法删除，后端会返回明确提示并由请求拦截器统一弹出
+    console.error('删除打分记录失败:', error)
   }
 }
 
@@ -405,6 +672,12 @@ const viewHistoryDetail = async (item) => {
 
 onMounted(() => {
   loadHistory()
+  loadPublishedWorks()
+  resumePendingTask()
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 </script>
 
@@ -524,6 +797,72 @@ onMounted(() => {
 .upload-actions {
   display: flex;
   justify-content: center;
+}
+
+/* ---------- AI 异步任务状态卡片 ---------- */
+.task-status-card {
+  margin-bottom: 30px;
+  border-radius: 12px;
+  border: 1px solid #e9ecef;
+  background: #f8f9fa;
+}
+
+.task-status-card.task-degraded {
+  background: #fffbe6;
+  border-color: #ffe58f;
+}
+
+.task-status-card.task-failed {
+  background: #fff2f0;
+  border-color: #ffccc7;
+}
+
+.task-status-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+}
+
+.task-icon {
+  font-size: 26px;
+  flex-shrink: 0;
+}
+
+.task-icon.is-loading {
+  animation: rotating 1.2s linear infinite;
+  color: #667eea;
+}
+
+.task-icon.warn {
+  color: #e6a23c;
+}
+
+.task-status-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-status-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+}
+
+.task-status-error {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #f56c6c;
+  word-break: break-all;
+}
+
+.task-status-actions {
+  margin-top: 10px;
+}
+
+@keyframes rotating {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .result-section {
@@ -874,8 +1213,10 @@ onMounted(() => {
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   opacity: 0;
   transition: opacity 0.3s ease;
 }
@@ -891,6 +1232,33 @@ onMounted(() => {
   padding: 8px 16px;
   background: rgba(102, 126, 234, 0.9);
   border-radius: 20px;
+}
+
+.publish-btn {
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  background: rgba(103, 194, 58, 0.9);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.publish-btn:hover {
+  background: #67c23a;
+}
+
+.publish-state {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 20px;
+}
+
+.publish-state.published {
+  color: #2e7d32;
+  background: rgba(232, 245, 233, 0.92);
 }
 
 .history-score {
@@ -940,6 +1308,33 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   margin-top: 30px;
+}
+
+/* ---------- 发布到广场弹窗 ---------- */
+.publish-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.publish-preview img {
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+
+.publish-tip {
+  font-size: 13px;
+  color: #888;
+  margin: 0;
+  text-align: center;
+}
+
+.publish-tip strong {
+  color: #667eea;
 }
 
 @media (max-width: 768px) {

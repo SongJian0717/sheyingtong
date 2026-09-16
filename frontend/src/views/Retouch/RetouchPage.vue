@@ -40,11 +40,26 @@
         </div>
         
         <div class="action-buttons">
-          <el-button type="primary" size="large" :loading="isAnalyzing" :disabled="!uploadedFile" @click="analyzePhoto">
-            {{ isAnalyzing ? '分析中...' : '🎨 获取修图建议' }}
+          <el-button type="primary" size="large" :loading="isAnalyzing" :disabled="!uploadedFile || taskPending" @click="analyzePhoto">
+            {{ isAnalyzing ? '提交中...' : '🎨 获取修图建议' }}
           </el-button>
         </div>
       </el-card>
+    </div>
+    
+    <!-- AI 异步任务状态：排队/分析中/失败/降级都在这里展示；SUCCESS 时不显示（直接看结果） -->
+    <div v-if="taskStatus && taskStatus !== 'SUCCESS'" class="task-status-card" :class="['task-' + taskStatus.toLowerCase()]">
+      <div class="task-status-inner">
+        <el-icon v-if="taskPending" class="task-icon is-loading"><Loading /></el-icon>
+        <el-icon v-else class="task-icon warn"><WarningFilled /></el-icon>
+        <div class="task-status-body">
+          <div class="task-status-title">{{ taskProgressText }}</div>
+          <div v-if="taskErrorMessage" class="task-status-error">{{ taskErrorMessage }}</div>
+          <div v-if="taskRetryable" class="task-status-actions">
+            <el-button size="small" type="primary" @click="retryTask">重试</el-button>
+          </div>
+        </div>
+      </div>
     </div>
     
     <div v-if="retouchResult" class="result-section">
@@ -231,9 +246,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
-import { Delete } from '@element-plus/icons-vue'
+import { ref, onMounted, watch, nextTick, computed, onUnmounted } from 'vue'
+import { Delete, Loading, WarningFilled } from '@element-plus/icons-vue'
 import { getRetouchSuggestions, getRetouchHistory, deleteRetouchRecord, getRetouchDetail } from '../../api/retouch'
+import { getAiTask, retryAiTask } from '../../api/ai'
 import { ElMessageBox, ElMessage } from 'element-plus'
 
 const fileInput = ref(null)
@@ -250,6 +266,33 @@ const currentPage = ref(1)
 const pageSize = ref(12)
 const totalElements = ref(0)
 const totalPages = ref(0)
+
+// ---------- AI 异步任务轮询状态 ----------
+const AI_TASK_KEY = 'syt_ai_task_retouch'
+const currentTaskId = ref(null)
+const taskStatus = ref(null) // PENDING / RUNNING / SUCCESS / DEGRADED / FAILED / TIMEOUT
+const taskErrorMessage = ref('')
+const taskRetryable = ref(false)
+let pollTimer = null
+let pollStartTime = 0
+
+const POLL_INTERVAL_FAST = 1500
+const POLL_INTERVAL_SLOW = 3000
+const POLL_SLOW_AFTER = 30000
+const POLL_CAP = 10 * 60 * 1000
+
+const taskPending = computed(() => taskStatus.value === 'PENDING' || taskStatus.value === 'RUNNING')
+
+const taskProgressText = computed(() => {
+  const map = {
+    PENDING: '任务排队中，等待 AI 分析...',
+    RUNNING: 'AI 正在分析照片，通常需要 30~90 秒...',
+    DEGRADED: 'AI 服务暂不可用，已展示降级修图建议',
+    FAILED: '分析失败，可点击重试',
+    TIMEOUT: '等待结果超时，可点击重试'
+  }
+  return map[taskStatus.value] || taskStatus.value || ''
+})
 
 const defaultResult = {
   objective: '',
@@ -322,12 +365,14 @@ const triggerUpload = () => {
 const handleFileChange = (event) => {
   const file = event.target.files[0]
   if (file) {
+    resetTaskState()
     uploadedFile.value = file
     previewUrl.value = URL.createObjectURL(file)
   }
 }
 
 const removeFile = () => {
+  resetTaskState()
   uploadedFile.value = null
   previewUrl.value = ''
   photoDescription.value = ''
@@ -335,6 +380,15 @@ const removeFile = () => {
   if (fileInput.value) {
     fileInput.value.value = ''
   }
+}
+
+/** 清空任务状态并停止轮询（换图 / 删除 / 查看历史时调用） */
+const resetTaskState = () => {
+  stopPolling()
+  currentTaskId.value = null
+  taskStatus.value = null
+  taskErrorMessage.value = ''
+  taskRetryable.value = false
 }
 
 const formatFileSize = (bytes) => {
@@ -359,30 +413,120 @@ const getStepClass = (index) => {
   return classes[index] || 'step-other'
 }
 
+/**
+ * 提交修图建议任务 → 轮询结果
+ * 改造前 POST /retouch/suggestions 要阻塞几十秒到几分钟；现在立即返回 {taskId}，
+ * 真正分析在后台消费者线程执行，这里轮询 GET /api/ai/tasks/{taskId} 直到终态。
+ */
 const analyzePhoto = async () => {
-  if (!uploadedFile.value) return
+  if (!uploadedFile.value || taskPending.value) return
   isAnalyzing.value = true
-  
+  taskStatus.value = 'PENDING'
+  taskErrorMessage.value = ''
+  taskRetryable.value = false
+
   try {
     const response = await getRetouchSuggestions(uploadedFile.value, photoDescription.value)
-    
-    retouchResult.value = {
-      ...defaultResult,
-      ...response,
-      afterImage: previewUrl.value
+    currentTaskId.value = response.taskId
+    sessionStorage.setItem(AI_TASK_KEY, String(response.taskId))
+
+    // broker 不可达降级为就地同步执行时：提交返回就是终态，直接渲染，不用等轮询
+    if (response.status === 'SUCCESS' || response.status === 'DEGRADED' || response.status === 'FAILED') {
+      const status = await getAiTask(response.taskId)
+      renderTaskStatus(status)
+    } else {
+      startPolling(response.taskId)
     }
-    
-    await nextTick()
-    renderFilteredImage()
   } catch (error) {
-    console.error('分析失败:', error)
-    retouchResult.value = {
-      ...defaultResult,
-      objective: '分析失败，请重试',
-      afterImage: previewUrl.value
-    }
+    console.error('提交修图建议任务失败:', error)
+    taskStatus.value = 'FAILED'
+    taskErrorMessage.value = '任务提交失败，请重试'
   } finally {
     isAnalyzing.value = false
+  }
+}
+
+// ---------- 轮询 ----------
+
+const startPolling = (taskId) => {
+  stopPolling()
+  pollStartTime = Date.now()
+  pollOnce(taskId)
+}
+
+const stopPolling = () => {
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
+const pollOnce = async (taskId) => {
+  const elapsed = Date.now() - pollStartTime
+  if (elapsed > POLL_CAP) {
+    taskStatus.value = 'TIMEOUT'
+    ElMessage.warning('等待结果超时，可点击“重试”继续')
+    return
+  }
+  try {
+    const status = await getAiTask(taskId)
+    renderTaskStatus(status)
+    if (!status.terminal) {
+      const interval = elapsed < POLL_SLOW_AFTER ? POLL_INTERVAL_FAST : POLL_INTERVAL_SLOW
+      pollTimer = setTimeout(() => pollOnce(taskId), interval)
+    }
+  } catch (error) {
+    // 轮询接口偶发失败：退避后继续，不中断等待
+    pollTimer = setTimeout(() => pollOnce(taskId), POLL_INTERVAL_SLOW)
+  }
+}
+
+/** 把任务状态刷新到页面：终态且有 result 时渲染结果（结构与旧同步返回体完全一致） */
+const renderTaskStatus = async (status) => {
+  currentTaskId.value = status.taskId
+  taskStatus.value = status.status
+  taskErrorMessage.value = status.errorMessage || ''
+  taskRetryable.value = status.retryable
+  if (status.result) {
+    retouchResult.value = {
+      ...defaultResult,
+      ...status.result,
+      afterImage: previewUrl.value
+    }
+    await nextTick()
+    renderFilteredImage()
+  }
+}
+
+/** 手动重试 FAILED / DEGRADED 任务（复用已上传的原图，不需要重新上传） */
+const retryTask = async () => {
+  if (!currentTaskId.value) return
+  try {
+    await retryAiTask(currentTaskId.value)
+    taskStatus.value = 'PENDING'
+    taskErrorMessage.value = ''
+    taskRetryable.value = false
+    ElMessage.info('已重新提交任务，等待 AI 分析...')
+    startPolling(currentTaskId.value)
+  } catch (error) {
+    // 失败提示已由请求拦截器统一弹出
+    console.error('重试任务失败:', error)
+  }
+}
+
+/** 页面刷新/返回后：从 sessionStorage 恢复未完成任务继续轮询 */
+const resumePendingTask = async () => {
+  const saved = sessionStorage.getItem(AI_TASK_KEY)
+  if (!saved) return
+  try {
+    const status = await getAiTask(saved)
+    await renderTaskStatus(status)
+    if (!status.terminal) {
+      startPolling(saved)
+    }
+  } catch (error) {
+    // 任务不存在/已换用户无权限：清掉残留
+    sessionStorage.removeItem(AI_TASK_KEY)
   }
 }
 
@@ -464,6 +608,7 @@ watch(() => retouchResult.value, () => {
 }, { deep: true })
 
 const viewHistory = async (item) => {
+  resetTaskState()
   previewUrl.value = item.imageUrl
   
   try {
@@ -537,6 +682,11 @@ const deleteRecord = async (id) => {
 
 onMounted(() => {
   loadHistory()
+  resumePendingTask()
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 </script>
 
@@ -670,6 +820,72 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   margin-top: 20px;
+}
+
+/* ---------- AI 异步任务状态卡片 ---------- */
+.task-status-card {
+  margin-bottom: 30px;
+  border-radius: 12px;
+  border: 1px solid #e9ecef;
+  background: #f8f9fa;
+}
+
+.task-status-card.task-degraded {
+  background: #fffbe6;
+  border-color: #ffe58f;
+}
+
+.task-status-card.task-failed {
+  background: #fff2f0;
+  border-color: #ffccc7;
+}
+
+.task-status-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+}
+
+.task-icon {
+  font-size: 26px;
+  flex-shrink: 0;
+}
+
+.task-icon.is-loading {
+  animation: rotating 1.2s linear infinite;
+  color: #667eea;
+}
+
+.task-icon.warn {
+  color: #e6a23c;
+}
+
+.task-status-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-status-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+}
+
+.task-status-error {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #f56c6c;
+  word-break: break-all;
+}
+
+.task-status-actions {
+  margin-top: 10px;
+}
+
+@keyframes rotating {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .result-section {

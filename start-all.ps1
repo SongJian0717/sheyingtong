@@ -1,4 +1,4 @@
-﻿﻿﻿﻿$projectDir = $PSScriptRoot
+﻿$projectDir = $PSScriptRoot
 $ErrorActionPreference = "Continue"
 
 function Kill-Port {
@@ -49,26 +49,43 @@ Write-Host "=== Starting Sheyingtong Services ===" -ForegroundColor Cyan
 Write-Host "Loading user environment variables..." -ForegroundColor Yellow
 Import-UserEnvVars
 
+Write-Host "`nChecking RabbitMQ broker..." -ForegroundColor Yellow
+if (Get-Command docker -ErrorAction SilentlyContinue) {
+    Write-Host "  docker found, starting rabbitmq via docker compose..." -ForegroundColor Green
+    Push-Location $projectDir
+    try {
+        docker compose up -d rabbitmq
+        Write-Host "  broker started (management console: http://localhost:15672)" -ForegroundColor Green
+    } catch {
+        Write-Host "  docker compose 启动 broker 失败，跳过（AI 提交将走就地同步降级）" -ForegroundColor Yellow
+    }
+    Pop-Location
+    Wait-Service "http://localhost:15672/" "rabbitmq" 90
+} else {
+    Write-Host "  docker 未安装，跳过 broker（AI 提交将走就地同步降级，异步队列不可用）" -ForegroundColor Yellow
+}
+
 Write-Host "Cleaning ports..." -ForegroundColor Yellow
 Kill-Port 8001; Kill-Port 8002; Kill-Port 8080; Kill-Port 5173
 
-Write-Host "`n[1/4] Starting vector-service (8001)..." -ForegroundColor Green
+Write-Host "`n[1/5] Starting vector-service (8001)..." -ForegroundColor Green
 Start-Process -FilePath "python" -ArgumentList "$projectDir\vector-service\main.py" -WorkingDirectory "$projectDir\vector-service" -WindowStyle Normal -PassThru
 Wait-Service "http://localhost:8001/health" "vector-service" 120
 
-Write-Host "`n[2/4] Starting chroma-service (8002)..." -ForegroundColor Green
+Write-Host "`n[2/5] Starting chroma-service (8002)..." -ForegroundColor Green
 Start-Process -FilePath "python" -ArgumentList "$projectDir\chroma-service\main.py" -WorkingDirectory "$projectDir\chroma-service" -WindowStyle Normal -PassThru
 Wait-Service "http://localhost:8002/collections" "chroma-service" 30
 
-Write-Host "`n[3/4] Starting Java backend (8080)..." -ForegroundColor Green
+Write-Host "`n[3/5] Starting Java backend (8080)..." -ForegroundColor Green
 Start-Process -FilePath "cmd" -ArgumentList "/c", "mvn", "spring-boot:run" -WorkingDirectory "$projectDir\backend" -WindowStyle Normal -PassThru
 Wait-Service "http://localhost:8080/api/auth/login" "backend" 120
 
-Write-Host "`n[4/4] Starting Vue frontend (5173)..." -ForegroundColor Green
+Write-Host "`n[4/5] Starting Vue frontend (5173)..." -ForegroundColor Green
 Start-Process -FilePath "cmd" -ArgumentList "/c", "npm", "run", "dev" -WorkingDirectory "$projectDir\frontend" -WindowStyle Normal -PassThru
 
 Write-Host "`n=== All services started ===" -ForegroundColor Cyan
 Write-Host "`nServices:" -ForegroundColor White
+Write-Host "  rabbitmq: http://localhost:15672 (仅 docker compose 成功启动时)" -ForegroundColor Gray
 Write-Host "  vector:   http://localhost:8001" -ForegroundColor Gray
 Write-Host "  chroma:   http://localhost:8002" -ForegroundColor Gray
 Write-Host "  backend:  http://localhost:8080" -ForegroundColor Gray

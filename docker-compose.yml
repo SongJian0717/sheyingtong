@@ -1,0 +1,132 @@
+# ================================================================
+# sheyingtong 生产部署（核心档）：MySQL + Redis + RabbitMQ + 后端 + 前端
+# ----------------------------------------------------------------
+# 用法（Linux）：
+#   cp .env.example .env  &&  vi .env                 # 填 QWEN_API_KEY / JWT_SECRET / DB_PASSWORD 等
+#   docker compose up -d --build                      # 核心档（含 RAG 需加 -f，见下方）
+#   docker compose ps --format "table {{.Name}}\t{{.Status}}"
+#   # 启用 RAG 语义搜索（Chroma + embedding）：
+#   docker compose -f docker-compose.yml -f docker-compose.rag.yml up -d --build
+#
+# 访问：http://<服务器IP>/   （nginx 统一入口，80 端口）
+#   · /api/**       → 后端 REST + SSE（AI 聊天流式，nginx 已关 buffering）
+#   · /uploads/**   → 上传图片静态资源
+#   · 直接调试后端：把 backend 的 ports 注释打开即可暴露 8080
+#
+# 数据持久化：
+#   · 命名卷 mysql-data / rabbitmq-data（docker volume ls 可见，删除用 `docker volume rm`）
+#   · 上传文件在项目目录 ./uploads（bind mount 到容器 /app/uploads）
+# ================================================================
+
+services:
+  # ---------- MySQL 8.0 ----------
+  mysql:
+    image: mysql:8.0
+    container_name: sheyingtong-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?请在 .env 中设置 DB_PASSWORD}
+      MYSQL_DATABASE: sheyingtong
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # mysqladmin ping 拿到密码失败会返回 non-zero，从而正确反映"服务不可用"
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---------- Redis（缓存层） ----------
+  redis:
+    image: redis:7-alpine
+    container_name: sheyingtong-redis
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- RabbitMQ（AI 异步任务消息中间件） ----------
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: sheyingtong-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---------- 后端 Spring Boot ----------
+  backend:
+    build: ./backend
+    container_name: sheyingtong-backend
+    # 调试时可打开：把 8080 暴露到宿主机直接打 API
+    # ports:
+    #   - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      # --- 数据源 ---
+      DB_URL: jdbc:mysql://mysql:3306/sheyingtong?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+      DB_USERNAME: root
+      DB_PASSWORD: ${DB_PASSWORD:?请在 .env 中设置 DB_PASSWORD}
+      # --- Redis（application.yml 硬编码 localhost，这里用 Spring 约定覆盖） ---
+      SPRING_DATA_REDIS_HOST: redis
+      # --- RabbitMQ ---
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+      # --- 安全/外部 AI 服务（敏感值只走 .env，不硬编码） ---
+      JWT_SECRET: ${JWT_SECRET:?请设置固定 JWT_SECRET（不设则每次重启签发的 token 全部失效）}
+      QWEN_API_KEY: ${QWEN_API_KEY:?请在 .env 中设置 QWEN_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com}
+      # --- RAG（核心档关闭外部 embedding，用 jar 内置 BGE-small-zh，零 Python 依赖） ---
+      EMBEDDING_LOCAL_SERVICE_ENABLED: "false"
+      # 关闭启动自动同步：核心档没有向量库，避免启动刷连接失败日志（RAG 档里会重新打开）
+      APP_RAG_AUTO_SYNC: "false"
+    volumes:
+      # 上传目录（原图/头像）——后端按进程 CWD 解析 ./uploads，容器内即 /app/uploads
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+
+  # ---------- 前端 nginx ----------
+  frontend:
+    build: ./frontend
+    container_name: sheyingtong-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+    name: sheyingtong-mysql-data
+  redis-data:
+    name: sheyingtong-redis-data
+  rabbitmq-data:
+    name: sheyingtong-rabbitmq-data

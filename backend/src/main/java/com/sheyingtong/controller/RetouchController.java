@@ -1,5 +1,6 @@
 package com.sheyingtong.controller;
 
+import com.sheyingtong.dto.response.AiTaskSubmitResponse;
 import com.sheyingtong.dto.response.ApiResponse;
 import com.sheyingtong.dto.response.RetouchResponse;
 import com.sheyingtong.entity.RetouchRecord;
@@ -34,9 +35,9 @@ public class RetouchController {
     
     private final RetouchService retouchService;
     
-    @Operation(summary = "AI修图建议", description = "上传照片后由AI分析并给出Lightroom/Capture One风格的调色参数建议：曝光、对比度、高光/阴影、白平衡、HSL色相、饱和度、明度、清晰度、锐化等。【需登录】")
+    @Operation(summary = "AI修图建议", description = "上传照片后由AI异步分析并给出Lightroom/Capture One风格的调色参数建议：曝光、对比度、高光/阴影、白平衡、HSL色相、饱和度、明度、清晰度、锐化等。接口立即返回任务ID，前端轮询 GET /api/ai/tasks/{taskId} 获取结果。【需登录】")
     @PostMapping("/suggestions")
-    public ApiResponse<RetouchResponse> getSuggestions(
+    public ApiResponse<AiTaskSubmitResponse> getSuggestions(
             @Parameter(description = "照片文件（jpg/png/webp）", required = true)
             @RequestParam("file") MultipartFile file,
             @Parameter(description = "可选：用户想要的修图风格描述（如\"日系清新\"、\"电影感\"）")
@@ -47,7 +48,7 @@ public class RetouchController {
         }
         
         String username = getCurrentUsername();
-        RetouchResponse response = retouchService.getRetouchSuggestions(file, description, username);
+        AiTaskSubmitResponse response = retouchService.submitSuggestions(file, description, username);
         return ApiResponse.success(response);
     }
     

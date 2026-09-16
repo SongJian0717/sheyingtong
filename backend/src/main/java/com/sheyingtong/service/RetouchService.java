@@ -2,8 +2,11 @@ package com.sheyingtong.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sheyingtong.dto.response.AiTaskSubmitResponse;
 import com.sheyingtong.dto.response.RetouchResponse;
 import com.sheyingtong.dto.response.RetouchResponse.*;
+import com.sheyingtong.entity.AiBizType;
+import com.sheyingtong.entity.AiTask;
 import com.sheyingtong.entity.RetouchRecord;
 import com.sheyingtong.entity.User;
 import com.sheyingtong.repository.RetouchRecordRepository;
@@ -17,10 +20,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import javax.imageio.ImageIO;
-import java.awt.Image;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -53,33 +52,44 @@ public class RetouchService {
     private final RetouchRecordRepository retouchRecordRepository;
     private final UserRepository userRepository;
     private final AIService aiService;
+    private final AiTaskService aiTaskService;
     private final ObjectMapper objectMapper;
 
     @Value("${app.upload.dir:./uploads}")
     private String uploadDir;
 
-    @Transactional
-    public RetouchResponse getRetouchSuggestions(MultipartFile file, String description, String username) {
+    /**
+     * 修图建议提交（原 getRetouchSuggestions 的入口）。
+     * ----------------------------------------------------------------
+     * ⚠️ 刻意**不**加 @Transactional：只有 aiTaskService.submit 内部建任务那一小段是事务，
+     * 文件落盘与消息投递都在事务外。改造前这里用 @Transactional 包住了整段 AI 调用
+     * （timeout 180s × 3 次重试最坏 9 分钟），与照片打分是同一类架构风险点。
+     *
+     * 真正的图片压缩、Qwen-VL 调用发生在 RetouchConsumer 里，期间不持有任何 DB 事务。
+     *
+     * @return 异步任务提交响应，前端拿 taskId 轮询 GET /api/ai/tasks/{taskId}
+     */
+    public AiTaskSubmitResponse submitSuggestions(MultipartFile file, String description, String username) {
+        log.info("提交修图建议任务，文件名: {}, 用户: {}", file.getOriginalFilename(), username);
+
         String filePath = saveFile(file);
+        log.info("修图照片已落盘: {}", filePath);
 
-        User user = null;
-        if (username != null && !username.isEmpty()) {
-            user = userRepository.findByUsername(username).orElse(null);
-        }
+        return aiTaskService.submit(AiBizType.RETOUCH, filePath, file.getOriginalFilename(), description, username);
+    }
 
-        RetouchResponse response;
-        try {
-            response = callAIService(file, description);
-        } catch (Exception e) {
-            log.warn("AI服务调用失败，使用Mock数据: {}", e.getMessage());
-            response = generateMockResponse(description);
-        }
-
+    /**
+     * 消费者调用：把 AI 返回的结构化修图建议持久化成 RetouchRecord 并返回落地实体。
+     * 调用方（消费者线程）不是事务方法，这里单条 save 自成一个短事务、立即提交。
+     * 完整响应（imageParams/colorPalette/techniques 等未落库的模块）由消费者序列化进
+     * ai_task.result_json；历史详情接口走 getRetouchDetail 的默认补齐兜底逻辑。
+     */
+    public RetouchRecord persistResult(AiTask task, RetouchResponse response) {
         RetouchRecord record = RetouchRecord.builder()
-                .user(user)
-                .filePath(filePath)
-                .fileName(file.getOriginalFilename())
-                .description(description)
+                .user(task.getUser())
+                .filePath(task.getFilePath())
+                .fileName(task.getFileName())
+                .description(task.getDescription())
                 .suggestions(response.getObjective())
                 .steps(response.getSteps() != null ? serializeSteps(response.getSteps()) : "[]")
                 .build();
@@ -88,24 +98,26 @@ public class RetouchService {
         record.setImageUrl("/api/retouch/image/" + record.getId());
         retouchRecordRepository.save(record);
 
-        return response;
+        log.info("修图建议结果已入库: taskId={}, 记录ID={}", task.getId(), record.getId());
+        return record;
     }
 
     /**
-     * 调 Qwen-VL-Plus 并解析为修图结构化响应
+     * 消费者调用：调 Qwen-VL-Plus 并解析为修图结构化响应
      * ----------------------------------------------------------------
-     * Step 1：compressImage 压缩到 1024 短边，Base64 编码
-     * Step 2：构造超长 systemPrompt（含每个字段的 JSON 契约、
+     * Step 1：图片已由 RetouchConsumer 用 ImageCompressor 压缩（消费线程内，无事务）
+     * Step 2：Base64 编码
+     * Step 3：构造超长 systemPrompt（含每个字段的 JSON 契约、
      *         枚举参数范围、steps/tools 最少 5 条等约束）
-     * Step 3：aiService.analyzeImage() 同步调用（3 次重试）
-     * Step 4：正则把 ```json ... ``` 剥离
-     * Step 5：objectMapper.readValue 转 Map → parseAIResponse 按模块提取字段，
+     * Step 4：aiService.analyzeImage() 单次调用（重试已上移到消息层，
+     *         不再在 AIService 内 3 次串联，避免 3×3×180s 的最坏 27 分钟）
+     * Step 5：正则把 ```json ... ``` 剥离
+     * Step 6：objectMapper.readValue 转 Map → parseAIResponse 按模块提取字段，
      *         缺失的模块用默认生成器补齐（generateDefaultSteps() 等），
      *         保证前端 UI 模块永远不会空
      */
-    private RetouchResponse callAIService(MultipartFile file, String description) throws Exception {
-        byte[] imageData = compressImage(file.getBytes());
-        String base64Image = Base64.getEncoder().encodeToString(imageData);
+    public RetouchResponse runAiAnalysis(byte[] compressedImage, String description) throws Exception {
+        String base64Image = Base64.getEncoder().encodeToString(compressedImage);
 
         String systemPrompt = "你是一位专业的修图师和摄影后期专家。请分析这张照片，提供详细的修图建议。";
         
@@ -186,7 +198,7 @@ public class RetouchService {
         return builder.build();
     }
 
-    private RetouchResponse generateMockResponse(String description) {
+    public RetouchResponse generateMockResponse(String description) {
         List<RetouchStep> steps = generateDefaultSteps();
         if (description != null && !description.isEmpty()) {
             if (description.toLowerCase().contains("人像")) {
@@ -356,41 +368,6 @@ public class RetouchService {
         } catch (IOException e) {
             throw new RuntimeException("文件上传失败", e);
         }
-    }
-
-    private byte[] compressImage(byte[] imageData) throws IOException {
-        int maxSize = 983616;
-        
-        if (imageData.length <= maxSize) {
-            return imageData;
-        }
-        
-        BufferedImage image = ImageIO.read(new java.io.ByteArrayInputStream(imageData));
-        
-        int width = image.getWidth();
-        int height = image.getHeight();
-        double scale = Math.sqrt((double) maxSize / imageData.length) * 0.9;
-        int newWidth = (int) (width * scale);
-        int newHeight = (int) (height * scale);
-        
-        BufferedImage resizedImage = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_RGB);
-        resizedImage.getGraphics().drawImage(image.getScaledInstance(newWidth, newHeight, Image.SCALE_SMOOTH), 0, 0, null);
-        
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        float quality = 0.9f;
-        
-        while (quality > 0.1f) {
-            baos.reset();
-            ImageIO.write(resizedImage, "jpg", new javax.imageio.stream.MemoryCacheImageOutputStream(baos));
-            
-            if (baos.size() <= maxSize) {
-                break;
-            }
-            
-            quality -= 0.1f;
-        }
-        
-        return baos.toByteArray();
     }
 
     private String serializeSteps(List<RetouchStep> steps) {

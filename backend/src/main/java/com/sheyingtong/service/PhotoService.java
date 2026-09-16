@@ -2,11 +2,15 @@ package com.sheyingtong.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sheyingtong.dto.response.AiTaskSubmitResponse;
 import com.sheyingtong.dto.response.PhotoScoreResponse;
+import com.sheyingtong.entity.AiBizType;
+import com.sheyingtong.entity.AiTask;
 import com.sheyingtong.entity.PhotoAnalysis;
 import com.sheyingtong.entity.User;
 import com.sheyingtong.repository.PhotoAnalysisRepository;
 import com.sheyingtong.repository.UserRepository;
+import com.sheyingtong.repository.WorkRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,9 +20,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,116 +30,132 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 照片打分服务：上传图片 → 压缩 → 调 Qwen-VL-Plus 多模态评分 → 入库 → 返回 6 维度分析
+ * 照片打分领域服务
  * ----------------------------------------------------------------
- * 核心链路：PhotoController.scorePhoto() → PhotoService.analyzePhoto() → AIService.analyzePhoto()
- * 降级策略：AI 服务异常 / 超时 / JSON 解析失败 → generateMockAIResult() 返回模拟评分，
- *          保证前端页面永远能展示（只是数据非 AI），不会空白
+ * 异步化改造后职责边界：
+ *  - **提交**（submitScore）：落盘原图 → 建 ai_task 任务 → 投消息 → 立即返回 taskId。
+ *    真正的图片压缩、Qwen-VL 调用发生在 PhotoScoreConsumer 里，期间不持有任何 DB 事务。
+ *  - **持久化**（persistScore / persistMockScore / toResponse）：供消费者写结果，也供查询接口复用。
+ *  - 查询 / 删除（getHistory / getAnalysisById / deleteAnalysis）保持不变。
  *
- * 持久化：PhotoAnalysis 表存原图路径、文件名、description、综合分、JSON 化的 analysis 字段、建议字符串
+ * Mock 降级保留在这里：AI 彻底失败且允许降级时，消费者调用 persistMockScore 写兜底数据，
+ * 但状态会标成 DEGRADED 而不是 SUCCESS —— 降级从"静默发生"变成"显式可见"。
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class PhotoService {
-    
+
     private final PhotoAnalysisRepository photoAnalysisRepository;
     private final UserRepository userRepository;
-    private final AIService aiService;
+    private final WorkRepository workRepository;
+    private final AiTaskService aiTaskService;
     private final ObjectMapper objectMapper;
-    
+
     @Value("${app.upload.dir:./uploads}")
     private String uploadDir;
-    
+
     /**
-     * 照片打分主流程（PhotoController 入口唯一调用点）
+     * 照片打分提交（原 analyzePhoto 的入口）。
      * ----------------------------------------------------------------
-     * Step 1：MultipartFile 落盘（UUID 重命名，避免重复）
-     * Step 2：通过 username 找 User 实体（未登录用户 user=null，记录里仍可存 null）
-     * Step 3：图片读取字节 → compressImage 压缩到 1024 短边
-     *         （DashScope 单张图片建议 < 2MB，压缩节省传输 + 响应更快）
-     * Step 4：调用 aiService.analyzePhoto(compressed, description) → Qwen-VL-Plus JSON 评分
-     * Step 5：parseAIResponse 把 JSON 字符串 → Map
-     *         解析失败 → generateMockAIResult() 降级兜底
-     * Step 6：综合分 / analysis JSON / suggestions 存 PhotoAnalysis 表
-     * Step 7：构建 PhotoScoreResponse 给前端（Map<维度名, {score, comment}>）
+     * ⚠️ 刻意**不**加 @Transactional：整个方法只有 aiTaskService.submit 内部建任务那一小段
+     * 是事务，文件落盘与消息投递都在事务外。改造前这里用 @Transactional 包住了整段
+     * AI 调用（最坏 9 分钟），期间把 Hikari 连接和 DB 事务全占住，是这个项目最大的
+     * 架构风险点 —— 并发 10 个上传就会打满默认连接池拖垮全站。
      *
-     * @param file         用户上传的原图 JPG/PNG/HEIC（ImageIO.read 自动支持主流格式）
-     * @param description  用户选填的描述，帮助模型更聚焦
-     * @param username     当前登录用户名，用来关联 PhotoAnalysis.user 外键
+     * @return 异步任务提交响应，前端拿 taskId 轮询 GET /api/ai/tasks/{taskId}
      */
-    @Transactional
-    public PhotoScoreResponse analyzePhoto(MultipartFile file, String description, String username) {
-        log.info("开始分析照片，文件名: {}, 描述: {}, 用户: {}", 
-                file.getOriginalFilename(), description, username);
-        
+    public AiTaskSubmitResponse submitScore(MultipartFile file, String description, String username) {
+        log.info("提交照片打分任务，文件名: {}, 用户: {}", file.getOriginalFilename(), username);
+
         String filePath = saveFile(file);
-        log.info("照片保存路径: {}", filePath);
-        
-        User user = null;
-        if (username != null && !username.isEmpty()) {
-            user = userRepository.findByUsername(username).orElse(null);
-            log.info("用户信息: {}", user != null ? user.getUsername() : "未登录用户");
-        }
-        
-        Map<String, Object> aiResult;
-        try {
-            byte[] imageData = file.getBytes();
-            log.info("原始图片大小: {} bytes", imageData.length);
-            
-            byte[] compressedData = compressImage(imageData);
-            log.info("压缩后图片大小: {} bytes", compressedData.length);
-            
-            String aiResponse = aiService.analyzePhoto(compressedData, description);
-            aiResult = parseAIResponse(aiResponse);
-            log.info("AI分析结果: {}", aiResult);
-        } catch (Exception e) {
-            log.error("AI分析失败，降级使用模拟数据: {}", e.getMessage());
-            aiResult = generateMockAIResult();
-        }
-        
+        log.info("照片已落盘: {}", filePath);
+
+        return aiTaskService.submit(AiBizType.PHOTO_SCORE, filePath, file.getOriginalFilename(), description, username);
+    }
+
+    /**
+     * 消费者调用：把 AI 解析结果持久化成 PhotoAnalysis 并返回落地实体。
+     * 调用方（消费者线程）不是事务方法，这里单条 save 自成一个短事务、立即提交。
+     */
+    public PhotoAnalysis persistScore(AiTask task, Map<String, Object> aiResult) {
+        User user = task.getUser();
+
         int score = (Integer) aiResult.getOrDefault("score", 75);
         String analysis;
         try {
-            analysis = aiResult.get("analysis") != null ? objectMapper.writeValueAsString(aiResult.get("analysis")) : "{}";
+            analysis = aiResult.get("analysis") != null
+                    ? objectMapper.writeValueAsString(aiResult.get("analysis")) : "{}";
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             analysis = "{}";
             log.warn("序列化analysis失败: {}", e.getMessage());
         }
         String suggestions = (String) aiResult.getOrDefault("suggestions", "");
-        
+
         PhotoAnalysis photoAnalysis = PhotoAnalysis.builder()
                 .user(user)
-                .filePath(filePath)
-                .fileName(file.getOriginalFilename())
-                .description(description)
+                .filePath(task.getFilePath())
+                .fileName(task.getFileName())
+                .description(task.getDescription())
                 .score(score)
                 .analysis(analysis)
                 .suggestions(suggestions)
                 .build();
-        
-        photoAnalysisRepository.save(photoAnalysis);
-        log.info("照片分析完成，评分: {}, 记录ID: {}", score, photoAnalysis.getId());
-        
+
+        PhotoAnalysis saved = photoAnalysisRepository.save(photoAnalysis);
+        log.info("照片打分结果已入库: taskId={}, 记录ID={}, 评分={}", task.getId(), saved.getId(), score);
+        return saved;
+    }
+
+    /** 消费者调用：AI 彻底失败且允许降级时，写入兜底(mock)数据 */
+    public PhotoAnalysis persistMockScore(AiTask task) {
+        return persistScore(task, generateMockAIResult());
+    }
+
+    /**
+     * 把持久化的 PhotoAnalysis 组装成前端要的响应结构。
+     * 同时被 GET /api/photo/detail/{id} 与消费者（写 result_json）复用。
+     */
+    public PhotoScoreResponse toResponse(PhotoAnalysis analysis) {
         @SuppressWarnings("unchecked")
-        Map<String, Map<String, Object>> analysisMap = (Map<String, Map<String, Object>>) aiResult.getOrDefault("analysis", Map.of());
-        
+        Map<String, Map<String, Object>> analysisMap = analysis.getAnalysis() != null
+                ? safeParseAnalysis(analysis.getAnalysis())
+                : Map.of();
+
         return PhotoScoreResponse.builder()
-                .score(score)
+                .score(analysis.getScore())
                 .analysis(Map.of(
-                        "composition", analysisMap.getOrDefault("composition", generateCompositionAnalysis(score)),
-                        "lighting", analysisMap.getOrDefault("lighting", generateLightingAnalysis(score)),
-                        "color", analysisMap.getOrDefault("color", generateColorAnalysis(score)),
-                        "focus", analysisMap.getOrDefault("focus", generateFocusAnalysis(score)),
-                        "content", analysisMap.getOrDefault("content", generateContentAnalysis(score)),
-                        "suggestion", analysisMap.getOrDefault("suggestion", generateSuggestionAnalysis(score))
+                        "composition", analysisMap.getOrDefault("composition", generateCompositionAnalysis(analysis.getScore())),
+                        "lighting", analysisMap.getOrDefault("lighting", generateLightingAnalysis(analysis.getScore())),
+                        "color", analysisMap.getOrDefault("color", generateColorAnalysis(analysis.getScore())),
+                        "focus", analysisMap.getOrDefault("focus", generateFocusAnalysis(analysis.getScore())),
+                        "content", analysisMap.getOrDefault("content", generateContentAnalysis(analysis.getScore())),
+                        "suggestion", analysisMap.getOrDefault("suggestion", generateSuggestionAnalysis(analysis.getScore()))
                 ))
-                .suggestions(suggestions)
+                .suggestions(analysis.getSuggestions())
                 .build();
     }
-    
+
     @SuppressWarnings("unchecked")
-    private Map<String, Object> parseAIResponse(String response) {
+    private Map<String, Map<String, Object>> safeParseAnalysis(String analysisJson) {
+        try {
+            return objectMapper.readValue(analysisJson,
+                    new TypeReference<Map<String, Map<String, Object>>>() {});
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    /**
+     * 解析 AI 返回的 JSON 文本 → Map。
+     * 消费者调用。注意：
+     *  - 剥离 markdown fences（模型偶尔会包 ```json ... ```）；
+     *  - suggestions 可能返回数组，这里统一转成 "；" 分隔的字符串；
+     *  - **解析失败直接抛异常**（不再静默返回 mock）——mock 降级只能走 DEGRADED
+     *    路径显式发生，否则"拿 mock 数据标 SUCCESS"会掩盖 AI 质量问题。
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> parseAIResponse(String response) {
         try {
             response = response.trim();
             if (response.startsWith("```json")) {
@@ -160,7 +177,7 @@ public class PhotoService {
             return result;
         } catch (Exception e) {
             log.error("解析AI响应失败: {}", e.getMessage());
-            return generateMockAIResult();
+            throw new RuntimeException("AI 响应解析失败: " + e.getMessage(), e);
         }
     }
     
@@ -282,6 +299,10 @@ public class PhotoService {
     public void deleteAnalysis(Long id) {
         PhotoAnalysis analysis = photoAnalysisRepository.findById(id).orElse(null);
         if (analysis != null) {
+            // 社区联动：照片已发布为作品时禁止删除（作品图与 AI 评语都依赖这条打分记录）
+            if (workRepository.existsByPhotoAnalysisId(id)) {
+                throw new RuntimeException("删除失败，该照片已发布为作品，请先在『我的作品』中删除对应作品");
+            }
             try {
                 Files.deleteIfExists(Paths.get(analysis.getFilePath()));
             } catch (IOException e) {
@@ -491,40 +512,5 @@ public class PhotoService {
             comment = comments[(int) (Math.random() * comments.length)];
         }
         return Map.of("score", focusScore, "comment", comment);
-    }
-    
-    private byte[] compressImage(byte[] imageData) throws IOException {
-        int maxSize = 983616;
-        
-        if (imageData.length <= maxSize) {
-            return imageData;
-        }
-        
-        BufferedImage image = ImageIO.read(new java.io.ByteArrayInputStream(imageData));
-        
-        int width = image.getWidth();
-        int height = image.getHeight();
-        double scale = Math.sqrt((double) maxSize / imageData.length) * 0.9;
-        int newWidth = (int) (width * scale);
-        int newHeight = (int) (height * scale);
-        
-        BufferedImage resizedImage = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_RGB);
-        resizedImage.getGraphics().drawImage(image.getScaledInstance(newWidth, newHeight, java.awt.Image.SCALE_SMOOTH), 0, 0, null);
-        
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        float quality = 0.9f;
-        
-        while (quality > 0.1f) {
-            baos.reset();
-            ImageIO.write(resizedImage, "jpg", new javax.imageio.stream.MemoryCacheImageOutputStream(baos));
-            
-            if (baos.size() <= maxSize) {
-                break;
-            }
-            
-            quality -= 0.1f;
-        }
-        
-        return baos.toByteArray();
     }
 }

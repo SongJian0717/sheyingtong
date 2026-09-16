@@ -1,4 +1,4 @@
-﻿﻿﻿﻿$ErrorActionPreference = "Continue"
+﻿$ErrorActionPreference = "Continue"
 
 function Stop-Port {
     param(
@@ -32,6 +32,19 @@ Stop-Port -Port 5173 -ServiceName "Vue frontend"
 Stop-Port -Port 8080 -ServiceName "Java backend"
 Stop-Port -Port 8002 -ServiceName "chroma-service"
 Stop-Port -Port 8001 -ServiceName "vector-service"
+
+# RabbitMQ（docker compose 起的 broker 一并收掉）
+if (Get-Command docker -ErrorAction SilentlyContinue) {
+    Write-Host "停止 RabbitMQ (docker compose)..." -ForegroundColor Yellow
+    try {
+        docker compose down
+        Write-Host "  RabbitMQ 已停止" -ForegroundColor Green
+    } catch {
+        Write-Host "  docker compose down 失败（可能 broker 未由本脚本启动）" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "docker 未安装，跳过 RabbitMQ 停止" -ForegroundColor Gray
+}
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan

@@ -88,6 +88,27 @@ const routes = [
     path: '/gallery',
     name: 'gallery',
     component: () => import('../views/Learning/GalleryPage.vue')
+  },
+  {
+    path: '/community',
+    name: 'community',
+    component: () => import('../views/Community/CommunityPage.vue')
+  },
+  {
+    path: '/community/work/:id',
+    name: 'work-detail',
+    component: () => import('../views/Community/WorkDetailPage.vue')
+  },
+  {
+    path: '/user/:username',
+    name: 'user-profile',
+    component: () => import('../views/Community/UserProfilePage.vue')
+  },
+  {
+    path: '/feed',
+    name: 'feed',
+    component: () => import('../views/Community/FeedPage.vue'),
+    meta: { requiresAuth: true }
   }
 ]
 

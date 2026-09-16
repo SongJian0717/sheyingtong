@@ -16,7 +16,12 @@
 
     <div class="profile-content">
       <div class="stats-card">
-        <h3 class="card-title">📊 我的数据</h3>
+        <div class="card-header">
+          <h3 class="card-title">📊 我的数据</h3>
+          <el-button v-if="userStore.isLoggedIn" type="text" @click="goPublicProfile">
+            🌐 我的公开主页 →
+          </el-button>
+        </div>
         <div class="stats-grid">
           <div class="stat-item">
             <div class="stat-value">{{ statistics.totalPhotos || 0 }}</div>
@@ -35,9 +40,65 @@
             <div class="stat-label">聊天会话</div>
           </div>
         </div>
+        <div class="community-stats-block">
+          <div class="community-stats-label">🌐 社区数据</div>
+          <div class="community-stats-grid">
+            <div class="stat-item community-stat-item" @click="openMyWorks">
+              <div class="stat-value">{{ statistics.worksCount || 0 }}</div>
+              <div class="stat-label">📤 我的作品</div>
+            </div>
+            <div class="stat-item community-stat-item" @click="openFollowers">
+              <div class="stat-value">{{ statistics.followersCount || 0 }}</div>
+              <div class="stat-label">👥 粉丝</div>
+            </div>
+            <div class="stat-item community-stat-item" @click="openFollowing">
+              <div class="stat-value">{{ statistics.followingCount || 0 }}</div>
+              <div class="stat-label">🤝 关注</div>
+            </div>
+          </div>
+        </div>
         <div class="join-date">
           <span>加入时间：{{ statistics.joinDate || '未知' }}</span>
         </div>
+      </div>
+
+      <div id="my-works" class="my-works-card" v-loading="loadingMyWorks">
+        <div class="card-header">
+          <h3 class="card-title">📤 我的作品</h3>
+          <span class="my-works-total">共 {{ myWorks.length }} 件</span>
+        </div>
+
+        <div v-if="myWorks.length" class="my-works-grid">
+          <div v-for="work in myWorks" :key="work.id" class="my-work-item">
+            <div class="my-work-thumb" @click="openMyWork(work)">
+              <img :src="workImageUrl(work.photoAnalysisId)" :alt="work.title" loading="lazy" />
+              <div class="my-work-overlay">
+                <span class="thumb-action">查看作品 →</span>
+              </div>
+            </div>
+            <div class="my-work-info">
+              <div class="my-work-title" :title="work.title">{{ work.title }}</div>
+              <div class="my-work-meta">
+                <span>👍 {{ work.likesCount || 0 }}</span>
+                <span>💬 {{ work.commentsCount || 0 }}</span>
+                <el-popconfirm
+                  title="删除后作品及其点赞、评论将一并清除，确定删除吗？"
+                  width="260"
+                  @confirm="handleDeleteMyWork(work)"
+                >
+                  <template #reference>
+                    <span class="my-work-delete">删除</span>
+                  </template>
+                </el-popconfirm>
+              </div>
+            </div>
+          </div>
+        </div>
+        <el-empty v-else-if="!loadingMyWorks" description="还没有发布作品" :image-size="80">
+          <el-button type="primary" round @click="$router.push('/photo-score')">
+            去「照片打分」发布第一件 →
+          </el-button>
+        </el-empty>
       </div>
 
       <div class="info-card">
@@ -97,11 +158,14 @@
 <script setup>
 import { ref, reactive, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { useUserStore } from '../../stores/user'
 import request from '../../utils/request'
 import { updateUserInfo, changePassword, getUserStatistics } from '../../api/auth'
+import { getMyWorks, deleteWork, workImageUrl } from '../../api/work'
 
 const userStore = useUserStore()
+const router = useRouter()
 const defaultAvatar = 'https://api.dicebear.com/7.x/avataaars/svg?seed='
 
 const isEditing = ref(false)
@@ -109,6 +173,8 @@ const isSaving = ref(false)
 const isPasswordSaving = ref(false)
 
 const statistics = ref({})
+const myWorks = ref([])
+const loadingMyWorks = ref(false)
 
 const formData = reactive({
   username: '',
@@ -227,6 +293,50 @@ const fetchStatistics = async () => {
   }
 }
 
+// ---------- 我的作品（社区）----------
+const loadMyWorks = async () => {
+  loadingMyWorks.value = true
+  try {
+    myWorks.value = await getMyWorks()
+  } catch (error) {
+    myWorks.value = []
+  } finally {
+    loadingMyWorks.value = false
+  }
+}
+
+const openMyWork = (work) => {
+  router.push(`/community/work/${work.id}`)
+}
+
+const openMyWorks = () => {
+  document.getElementById('my-works')?.scrollIntoView({ behavior: 'smooth' })
+}
+
+const goPublicProfile = () => {
+  router.push(`/user/${userStore.userInfo.username}`)
+}
+
+const openFollowers = () => {
+  // 粉丝/关注明细见他人主页的 Tab；自己的粉丝墙可后续在主页扩展
+  goPublicProfile()
+}
+
+const openFollowing = () => {
+  goPublicProfile()
+}
+
+const handleDeleteMyWork = async (work) => {
+  try {
+    await deleteWork(work.id)
+    ElMessage.success('作品已删除')
+    loadMyWorks()
+    fetchStatistics()
+  } catch (error) {
+    console.error('删除作品失败:', error)
+  }
+}
+
 const triggerAvatarUpload = () => {
   avatarInput.value?.click()
 }
@@ -314,6 +424,7 @@ watch(() => userStore.userInfo, () => {
 onMounted(() => {
   initForm()
   fetchStatistics()
+  loadMyWorks()
 })
 </script>
 
@@ -490,6 +601,138 @@ onMounted(() => {
 
 .avatar-icon {
   font-size: 18px;
+}
+
+/* ---------- 社区数据 ---------- */
+.community-stats-block {
+  margin-top: 10px;
+  padding-top: 18px;
+  border-top: 1px solid #eee;
+}
+
+.community-stats-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #666;
+  margin-bottom: 14px;
+}
+
+.community-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.stat-item.community-stat-item {
+  cursor: pointer;
+  background: linear-gradient(135deg, #eef1ff 0%, #f7efff 100%);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stat-item.community-stat-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.2);
+}
+
+/* ---------- 我的作品 ---------- */
+.my-works-card {
+  background: white;
+  border-radius: 15px;
+  padding: 30px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+}
+
+.my-works-total {
+  font-size: 13px;
+  color: #999;
+}
+
+.my-works-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 16px;
+}
+
+.my-work-item {
+  background: #fafbfe;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #f0f0f4;
+  transition: box-shadow 0.25s ease;
+}
+
+.my-work-item:hover {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+
+.my-work-thumb {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  cursor: pointer;
+  background: #e8ecf3;
+}
+
+.my-work-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.my-work-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.my-work-thumb:hover .my-work-overlay {
+  opacity: 1;
+}
+
+.thumb-action {
+  color: #fff;
+  font-size: 14px;
+  padding: 6px 16px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  border-radius: 20px;
+}
+
+.my-work-info {
+  padding: 10px 12px;
+}
+
+.my-work-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.my-work-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: #999;
+  margin-top: 6px;
+}
+
+.my-work-delete {
+  margin-left: auto;
+  color: #f56c6c;
+  cursor: pointer;
+}
+
+.my-work-delete:hover {
+  text-decoration: underline;
 }
 
 @media (max-width: 600px) {

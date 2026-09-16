@@ -1,0 +1,4 @@
+# 模型缓存 1.2GB 走 /models 卷，不进 build context（否则每次构建都向 daemon 传 1.2GB）
+models/
+__pycache__/
+*.pyc

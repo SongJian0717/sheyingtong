@@ -1,3 +1,15 @@
+:root {
+  /* Element Plus 主色 → 品牌紫（配套明暗梯度，需逐级覆盖）
+     使全站 type="primary" 按钮/组件统一为 #667eea 系配色 */
+  --el-color-primary: #667eea;
+  --el-color-primary-light-3: #94a5f1;
+  --el-color-primary-light-5: #b3bff5;
+  --el-color-primary-light-7: #d1d8f9;
+  --el-color-primary-light-8: #e0e5fb;
+  --el-color-primary-light-9: #f0f2fd;
+  --el-color-primary-dark-2: #5265bb;
+}
+
 * {
   margin: 0;
   padding: 0;

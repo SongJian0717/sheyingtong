@@ -2,8 +2,6 @@ package com.sheyingtong.service;
 
 import com.sheyingtong.entity.Gear;
 import com.sheyingtong.entity.PhotographyTerm;
-import com.sheyingtong.repository.GearRepository;
-import com.sheyingtong.repository.PhotographyTermRepository;
 import dev.langchain4j.agent.tool.Tool;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,14 +18,16 @@ import java.util.Optional;
 @Slf4j
 public class PhotographyTools {
 
-    private final PhotographyTermRepository termRepository;
-    private final GearRepository gearRepository;
+    // 走 DictionaryService / GearService 而不是直接查库：用户每发一条消息，工具链可能查多次
+    // 词库和器材，复用同一份整表缓存可以省掉这些 SQL
+    private final DictionaryService dictionaryService;
+    private final GearService gearService;
 
     @Tool("查询摄影词典中的术语定义")
     public String queryDictionary(String term) {
         log.info("调用工具: queryDictionary, 参数: {}", term);
-        Optional<PhotographyTerm> foundTerm = termRepository.findByTerm(term.trim());
-        
+        Optional<PhotographyTerm> foundTerm = dictionaryService.findTerm(term == null ? null : term.trim());
+
         if (foundTerm.isEmpty()) {
             return "未找到术语: " + term;
         }
@@ -44,7 +44,7 @@ public class PhotographyTools {
     @Tool("搜索摄影器材")
     public String searchGear(String query) {
         log.info("调用工具: searchGear, 参数: {}", query);
-        List<Gear> gears = gearRepository.searchByKeyword(query.trim());
+        List<Gear> gears = gearService.searchByKeyword(query);
         
         if (gears.isEmpty()) {
             return "未找到符合条件的器材";
@@ -75,7 +75,7 @@ public class PhotographyTools {
         BigDecimal min = minBudget != null ? BigDecimal.valueOf(minBudget) : BigDecimal.ZERO;
         BigDecimal max = maxBudget != null ? BigDecimal.valueOf(maxBudget) : new BigDecimal("1000000");
         
-        List<Gear> gears = gearRepository.findByPriceRange(min, max);
+        List<Gear> gears = gearService.findByPriceRange(min, max);
         
         if (gears.isEmpty()) {
             return "未找到符合预算的器材";

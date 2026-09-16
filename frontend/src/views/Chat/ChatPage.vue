@@ -120,18 +120,29 @@
 
       <div class="chat-welcome" v-else>
         <div class="welcome-content">
-          <el-icon size="80" class="welcome-icon"><ChatSquare /></el-icon>
-          <h2>欢迎使用AI摄影助手</h2>
-          <p>我可以帮你解答摄影相关问题：</p>
-          <ul class="welcome-features">
-            <li>📚 查询摄影词典</li>
-            <li>🎥 搜索摄影器材</li>
-            <li>⚙️ 计算曝光参数</li>
-            <li>💡 获取摄影技巧</li>
-          </ul>
-          <el-button type="primary" size="large" @click="createNewSession">
-            开始对话
-          </el-button>
+          <div class="welcome-badge">
+            <el-icon :size="34"><ChatSquare /></el-icon>
+          </div>
+          <h2 class="welcome-title">嗨，我是摄影 AI 助手 👋</h2>
+          <p class="welcome-desc">挑一个问题直接开聊，也可以新建空白对话自由提问</p>
+
+          <div class="welcome-starters">
+            <div
+              v-for="question in starterQuestions"
+              :key="question"
+              class="starter-card"
+              @click="startWithQuestion(question)"
+            >
+              <span class="starter-icon">{{ starterIcons[question] }}</span>
+              <span class="starter-text">{{ question }}</span>
+              <span class="starter-go">→</span>
+            </div>
+          </div>
+
+          <div class="welcome-foot">
+            想自己提问？
+            <el-button type="primary" @click="createNewSession">新建对话开始</el-button>
+          </div>
         </div>
       </div>
     </div>
@@ -303,7 +314,27 @@ const sendMessageHandler = async () => {
  }
 };
 const sendMessage = () => {
- sendMessageHandler();
+  sendMessageHandler();
+};
+
+// 欢迎页快捷提问卡片：引导问题 → 图标
+const starterIcons = {
+  '给我讲讲光圈、快门、ISO 怎么配合': '📖',
+  '推荐一款适合新手的入门相机': '🎥',
+  '这张照片该怎么调成日系色调': '🎨',
+  '拍夜景人像要注意哪些设置': '🌃'
+};
+const starterQuestions = Object.keys(starterIcons);
+
+// 点击引导卡片：先建会话，再自动发送该问题，进入正常的流式回答
+const startWithQuestion = async (question) => {
+  try {
+    await createNewSession();
+    inputMessage.value = question;
+    sendMessage();
+  } catch (error) {
+    console.error('开始对话失败:', error);
+  }
 };
 const triggerImageUpload = () => {
  if (imageInput.value) {
@@ -822,52 +853,100 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   background: #fafafa;
+  overflow-y: auto;
 }
 
 .welcome-content {
-  text-align: center;
+  width: 100%;
+  max-width: 660px;
   padding: 40px;
+  text-align: center;
 }
 
-.welcome-icon {
-  margin-bottom: 24px;
-  color: #667eea;
+.welcome-badge {
+  width: 76px;
+  height: 76px;
+  margin: 0 auto 22px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 26px rgba(102, 126, 234, 0.35);
 }
 
-.welcome-content h2 {
-  font-size: 28px;
-  font-weight: 600;
-  margin-bottom: 16px;
-  color: #333;
+.welcome-title {
+  font-size: 26px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: #222;
 }
 
-.welcome-content p {
-  font-size: 16px;
-  color: #666;
-  margin-bottom: 24px;
+.welcome-desc {
+  font-size: 15px;
+  color: #888;
+  margin: 0 0 28px;
 }
 
-.welcome-features {
-  list-style: none;
-  padding: 0;
-  margin-bottom: 32px;
+.welcome-starters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 26px;
   text-align: left;
-  display: inline-block;
 }
 
-.welcome-features li {
+.starter-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid #eceef5;
+  border-radius: 12px;
+  padding: 15px 16px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  color: #444;
+}
+
+.starter-card:hover {
+  border-color: #c9d2fb;
+  background: #f7f9ff;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.12);
+}
+
+.starter-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.starter-text {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.starter-go {
+  color: #c3c9e8;
   font-size: 16px;
-  color: #555;
-  margin-bottom: 12px;
-  padding-left: 24px;
-  position: relative;
+  flex-shrink: 0;
 }
 
-.welcome-features li::before {
-  content: '✓';
-  position: absolute;
-  left: 0;
-  color: #667eea;
-  font-weight: bold;
+.welcome-foot {
+  font-size: 14px;
+  color: #999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
+
+@media (max-width: 720px) {
+  .welcome-starters {
+    grid-template-columns: 1fr;
+  }
+}
+
 </style>

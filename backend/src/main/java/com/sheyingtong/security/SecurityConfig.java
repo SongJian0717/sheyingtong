@@ -80,6 +80,19 @@ public class SecurityConfig {
                         .requestMatchers("/api/retouch/suggestions").authenticated()
                         .requestMatchers("/api/retouch/history").authenticated()
                         .requestMatchers(HttpMethod.DELETE, "/api/retouch/**").authenticated()
+                        // 异步任务状态查询/重试：必须登录，且控制器内还会校验任务归属，
+                        // 否则任何登录用户都能靠遍历 taskId 拿到别人的评分结果
+                        .requestMatchers("/api/ai/tasks/**").authenticated()
+                        // ---------- 摄影社区：写操作需登录（读操作公开，见下方 permitAll）----------
+                        .requestMatchers("/api/works/mine").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/works", "/api/works/**").authenticated()
+                        .requestMatchers(HttpMethod.DELETE, "/api/works/**").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/users/**").authenticated()
+                        .requestMatchers(HttpMethod.DELETE, "/api/users/**").authenticated()
+                        .requestMatchers("/api/feed").authenticated()
+                        // 社区公开读：作品广场/详情/评论、用户主页/作品墙/粉丝关注列表
+                        .requestMatchers(HttpMethod.GET, "/api/works", "/api/works/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/users", "/api/users/**").permitAll()
                         // 兜底：剩余 URL 放行（如 /api/rag/**）
                         .anyRequest().permitAll()
                 )

@@ -1,5 +1,6 @@
 package com.sheyingtong.controller;
 
+import com.sheyingtong.dto.response.AiTaskSubmitResponse;
 import com.sheyingtong.dto.response.ApiResponse;
 import com.sheyingtong.dto.response.PhotoScoreResponse;
 import com.sheyingtong.entity.PhotoAnalysis;
@@ -35,9 +36,9 @@ public class PhotoController {
     
     private final PhotoService photoService;
     
-    @Operation(summary = "AI照片打分", description = "上传照片后由AI进行六维度评分：构图、光线、色彩、对焦、内容、综合建议。每个维度80-120字详细评语。【需登录】")
+    @Operation(summary = "AI照片打分（异步提交）", description = "上传照片后立即返回任务ID，AI 六维度评分在后台异步执行，前端轮询 GET /api/ai/tasks/{taskId} 取结果。每个维度80-120字详细评语。【需登录】")
     @PostMapping("/score")
-    public ApiResponse<PhotoScoreResponse> scorePhoto(
+    public ApiResponse<AiTaskSubmitResponse> scorePhoto(
             @Parameter(description = "照片文件（jpg/png/webp）", required = true)
             @RequestParam("file") MultipartFile file,
             @Parameter(description = "可选：用户对照片的补充描述，帮助AI更精准评价")
@@ -48,7 +49,7 @@ public class PhotoController {
         }
         
         String username = getCurrentUsername();
-        PhotoScoreResponse response = photoService.analyzePhoto(file, description, username);
+        AiTaskSubmitResponse response = photoService.submitScore(file, description, username);
         return ApiResponse.success(response);
     }
     

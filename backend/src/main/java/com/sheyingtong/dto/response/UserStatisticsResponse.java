@@ -20,4 +20,13 @@ public class UserStatisticsResponse {
     private Integer totalScoreRecords;
 
     private String joinDate;
+
+    /** 摄影社区：发布的作品数 */
+    private Long worksCount;
+
+    /** 摄影社区：粉丝数 */
+    private Long followersCount;
+
+    /** 摄影社区：关注数 */
+    private Long followingCount;
 }

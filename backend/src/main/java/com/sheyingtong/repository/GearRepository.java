@@ -4,6 +4,8 @@ import com.sheyingtong.entity.Gear;
 import com.sheyingtong.entity.GearCategory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,7 +16,20 @@ import java.util.List;
 
 @Repository
 public interface GearRepository extends JpaRepository<Gear, Long> {
-    
+
+    /**
+     * 覆盖父接口的 findAll：category 是 EAGER 的 ManyToOne，不 join fetch 的话
+     * 36 条器材会额外产生 36 次 N+1 查询（缓存冷启动回源时尤其明显）。
+     */
+    @Override
+    @EntityGraph(attributePaths = "category")
+    List<Gear> findAll();
+
+    /** 同上，供缓存回源时按指定顺序加载 */
+    @Override
+    @EntityGraph(attributePaths = "category")
+    List<Gear> findAll(Sort sort);
+
     Page<Gear> findByCategory(GearCategory category, Pageable pageable);
     
     Page<Gear> findByBrand(String brand, Pageable pageable);

@@ -91,6 +91,39 @@ spring:
           max-wait: 500ms
         shutdown-timeout: 100ms
 
+  # ---------- RabbitMQ：AI 异步任务消息中间件（设计见 docs/RabbitMQ异步化设计方案.md） ----------
+  # 拓扑（exchange/队列/DLX）由 config/RabbitConfig.java 声明，这里只管连接与消费参数
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    # ⚠️ 凭据走环境变量，默认 guest 仅本机可登录；生产必须覆盖，不要在这里写死真实密码
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    # ⚠️ 短超时：broker 没起来时快速失败，由 AiTaskProducer 捕获后走"就地同步执行"降级，
+    #    不能让请求线程无限等待（对齐 Redis 那边 connect-timeout: 500ms 的思路）
+    connection-timeout: 5s
+    # 发布方确认：消息真正落到 broker 才算成功，回调里记日志（见 RabbitConfig）
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        # ⚠️ 一次只预取 1 条：AI 调用动辄几十秒，预取多了会让消息堆在单个消费者内存里空等，
+        #    也可能一次性向 DashScope 打出超过配额的并发请求
+        prefetch: 1
+        concurrency: 2
+        max-concurrency: 4
+        # 消费失败不原地 requeue，交给 RetryInterceptor 退避重试 / RepublishMessageRecoverer 进死信
+        # （原地 requeue 会造成失败消息热循环，把 CPU 和日志打满）
+        default-requeue-rejected: false
+        # ⚠️ broker 没起时队列不存在，若保持默认 true 会让容器启动失败 → 应用起不来。
+        #    设 false 后只记 WARN，配合 RabbitAdmin.ignoreDeclarationExceptions 做到
+        #    "broker 挂了应用照样启动，提交时再降级同步执行"
+        missing-queues-fatal: false
+        acknowledge-mode: auto
+
 jwt:
   secret: ${JWT_SECRET:}
   expiration: ${JWT_EXPIRATION:86400000}
@@ -119,6 +152,39 @@ app:
     # ⚠️ 应急开关：true = 启动时直接删 chroma 集合重建（乱码/向量坏了用一次）
     #    正常运行时保持 false，否则每次启动都重跑 50 条向量化，浪费时间
     force-reset-on-start: false
+
+  # ---------- Redis 缓存配置（设计说明见 docs/Redis缓存设计方案.md） ----------
+  cache:
+    # 全局开关：false = 所有缓存读写直接短路（直查数据库），便于做"开/关缓存"的对比压测
+    enabled: true
+    # 统一 key 命名空间，与聊天记忆的 sheyingtong: 保持一致
+    key-prefix: "sheyingtong:cache:"
+    # TTL 随机抖动比例（±10%），防同一时刻大批 key 集体过期造成雪崩
+    jitter-ratio: 0.1
+    # 空值占位缓存 TTL，防穿透
+    null-ttl: 30s
+    # Tier A 静态知识库：词典 50 条 / 器材 36 条，均无写入口，用长 TTL 整表缓存
+    dict-ttl: 12h
+    gear-ttl: 12h
+
+  # ---------- AI 任务异步化配置（设计说明见 docs/RabbitMQ异步化设计方案.md） ----------
+  ai:
+    async:
+      # 总开关：false = 不投消息、请求线程同步执行到底（即改造前的行为）
+      # 用于"开/关异步"的对比压测，也是出问题时的应急回退开关
+      enabled: true
+      # broker 不可达（AmqpConnectException 等）时是否就地同步执行
+      #   true  = 慢但可用（请求会挂到 AI 返回为止，但功能正常）
+      #   false = 直接返回 503，让前端明确知道"现在提交不了"
+      fallback-to-sync: true
+      # 单条消息最多被消费几次（条件更新闸门用 attempt_count 卡这个上限）
+      max-attempts: 3
+      # 最后一次尝试仍失败时：true=写兜底 mock 结果并把任务标记 DEGRADED（页面永远不空）；false=直接标 FAILED
+      degrade-on-failure: true
+      # 消费失败后的指数退避：5s → 10s → 20s…（上限 retry-max-backoff）
+      retry-backoff: 5s
+      retry-backoff-multiplier: 2.0
+      retry-max-backoff: 60s
 
 # ---------- Springdoc OpenAPI / Swagger UI 配置 ----------
 springdoc:

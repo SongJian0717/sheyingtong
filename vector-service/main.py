@@ -4,10 +4,12 @@ from typing import List
 import numpy as np
 import os
 
-os.environ['TRANSFORMERS_CACHE'] = './models'
-os.environ['SENTENCE_TRANSFORMERS_HOME'] = './models'
-os.environ['TRANSFORMERS_OFFLINE'] = '1'
-os.environ['HF_DATASETS_OFFLINE'] = '1'
+# 用 setdefault 而非直接赋值：本机保持"离线优先"（读 ./models 缓存），
+# Docker 部署时可经环境变量覆盖为在线下载（TRANSFORMERS_OFFLINE=0）
+os.environ.setdefault('TRANSFORMERS_CACHE', './models')
+os.environ.setdefault('SENTENCE_TRANSFORMERS_HOME', './models')
+os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
+os.environ.setdefault('HF_DATASETS_OFFLINE', '1')
 
 app = FastAPI(title="Qwen3-Embedding Service", version="1.0.0")
 

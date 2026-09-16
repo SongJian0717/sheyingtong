@@ -31,6 +31,52 @@ const request = axios.create({
 })
 
 /**
+ * 静默请求实例：不挂载任何全局拦截器（不弹错误提示、不自动跳转登录页）
+ * 仅供"启动时校验本地 Token 是否有效"这类需要安静失败的场景使用，
+ * 业务请求一律走上方带拦截器的 request。
+ */
+const silentRequest = axios.create({
+  baseURL: '/api',
+  timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json'
+  }
+})
+
+/**
+ * 清除本地存储中的登录凭证
+ * user 是历史版本遗留的旧键名，一并清掉避免脏数据残留
+ */
+const clearStoredLogin = () => {
+  localStorage.removeItem('token')
+  localStorage.removeItem('userInfo')
+  localStorage.removeItem('user')
+}
+
+/**
+ * 校验本地 localStorage 中保存的 Token 是否真实有效
+ * 调 /auth/user：Token 有效返回用户信息；无效（过期/签名不匹配/用户不存在）返回 null。
+ * 后端重启后 JWT 随机密钥变化，旧 Token 会被判定为无效，
+ * 从而避免前端"显示已登录但调用接口全部无权限"的状态错乱。
+ */
+export const validateStoredToken = async () => {
+  const token = localStorage.getItem('token')
+  if (!token) return null
+  try {
+    const response = await silentRequest.get('/auth/user', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    const body = response.data
+    if (body && body.code === 200 && body.data) {
+      return body.data
+    }
+    return null
+  } catch (e) {
+    return null
+  }
+}
+
+/**
  * 请求拦截器：每次发请求前自动补全 Authorization header
  * - 从 localStorage.getItem('token') 取 JWT（登录接口写入）
  * - 有 token 就加 Bearer 前缀
@@ -97,12 +143,15 @@ request.interceptors.response.use(
       switch (status) {
         case 401:
           ElMessage.error('登录已过期，请重新登录')
-          localStorage.removeItem('token')
-          localStorage.removeItem('user')
+          clearStoredLogin()
           window.location.href = '/login'
           break
         case 403:
-          ElMessage.error('权限不足，无法访问')
+          // 本项目没有角色区分：带 Token 仍返回 403，只可能是 Token 无效/未登录，等同登录失效
+          // 必须清掉本地登录态并回登录页，否则会卡在"显示已登录但接口全无权限"的错乱状态
+          ElMessage.error('登录状态已失效，请重新登录')
+          clearStoredLogin()
+          window.location.href = '/login'
           break
         case 404:
           ElMessage.error('资源未找到')

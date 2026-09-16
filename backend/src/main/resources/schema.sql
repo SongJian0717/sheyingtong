@@ -29,10 +29,15 @@ ALTER TABLE gear_categories CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_uni
 ALTER TABLE chat_sessions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 -- 表：chat_messages（AI 问答消息内容）
 ALTER TABLE chat_messages CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
--- 表：photo_analyses（照片打分结果）
-ALTER TABLE photo_analyses CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
--- 表：retouch_suggestions（修图建议）
-ALTER TABLE retouch_suggestions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- 表：photo_analysis（照片打分结果）※ 修正：旧脚本误写为 photo_analyses（复数），
+--     因 continue-on-error 静默失败从未生效，导致旧库该表可能仍是 latin1
+ALTER TABLE photo_analysis CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- 表：retouch_records（修图建议）※ 修正：旧脚本误写为 retouch_suggestions
+ALTER TABLE retouch_records CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- 表：ai_task（AI 异步任务，RabbitMQ 异步化新增，含 error_message/result_json 文本字段）
+ALTER TABLE ai_task CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- 注：ai_task 的索引（idx_ai_task_user_created / idx_ai_task_status）由 Hibernate
+--   ddl-auto=update 根据实体 @Table(indexes=...) 自动创建，此处不重复声明。
 
 -- =====================================================================
 -- 【重要】关于旧乱码数据的清理

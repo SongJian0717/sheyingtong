@@ -7,6 +7,7 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -20,14 +21,21 @@ import java.util.List;
  * ----------------------------------------------------------------
  * 模型：阿里云 DashScope OpenAI 兼容模式 → Qwen-VL-Plus（视觉语言大模型）
  *
- * 调用策略：
- *  - MAX_RETRY = 3：网络抖动、限流时自动重试，间隔 RETRY_DELAY_MS=2s 指数退避（线性）
- *  - preferIPv4Stack=true：部分 Java 环境下 IPv6 路由不稳定，强制使用 IPv4 访问 dashscope
- *  - parseResponse()：模型偶尔返回 ```json``` 代码块，需先剥离 fences 才能被 JSON.parse 正常反序列化
+ * 调用策略（异步化改造后）：
+ *  - **单次尝试，失败即抛**。重试已经上移到消息层（RabbitMQ 的 RetryInterceptor，
+ *    指数退避 + 重试耗尽进死信队列），消费者会重新调用本方法。
+ *    改造前这里是 MAX_RETRY=3、固定间隔 2s 的内部重试；如果和消息层的重试叠加，
+ *    最坏情况会变成 3×3=9 次 × 180s 超时 ≈ 27 分钟，所以必须只留一层。
+ *  - **共享 ChatModel 实例**：改造前每次调用都 new 一个 OpenAiChatModel，
+ *    等于每次新建 HTTP 客户端、重建连接池、重新 TLS 握手。现在整个进程复用一个。
+ *  - preferIPv4Stack=true：部分 Java 环境下 IPv6 路由不稳定，强制 IPv4 访问 dashscope；
+ *    这是全局 JVM 属性，只需在启动时设置一次（原来是每次调用都设，纯属重复的全局副作用）。
+ *  - parseResponse()：模型偶尔返回 ```json``` 代码块，需先剥离 fences 才能正常反序列化
  *
  * 主方法：
- *  analyzePhoto()   → 给 PhotoService 用，严格输出 6 维度 + 综合分 JSON
- *  analyzeImage()   → 给 RetouchService 用，自定义 system prompt 用于修图建议
+ *  analyzePhoto()   → 给照片打分任务用，严格输出 6 维度 + 综合分 JSON
+ *  analyzeImage()   → 给修图建议任务用，自定义 system prompt
+
  */
 @Service
 @Slf4j
@@ -42,41 +50,65 @@ public class AIService {
     @Value("${qwen.timeout:180000}")
     private int timeout;
 
-    private static final int MAX_RETRY = 3;
-    private static final long RETRY_DELAY_MS = 2000;
+    /** 全进程共享的模型实例（延迟创建，见 chatModel()） */
+    private volatile ChatModel sharedChatModel;
 
     /**
-     * 照片 6 维度打分主方法（给 PhotoService.scorePhoto 调用）
-     * ----------------------------------------------------------------
-     * 鲁棒性策略：
-     *  Step 1：System.setProperty("java.net.preferIPv4Stack", true) → 优先 IPv4，
-     *          解决 DashScope API 在 Windows IPv6 栈下 "No route to host" 的偶发故障
-     *  Step 2：buildSystemPrompt() → 严格要求模型按固定 JSON 结构返回
-     *          （6 维度评分 + 80-120 字评语 + suggestions 数组）
-     *  Step 3：图片转 Base64 → ImageContent.from("data:image/jpeg;base64,XXX") 多模态消息
-     *  Step 4：循环 MAX_RETRY=3 次，catch 住网络/限流/5xx 异常，每次间隔 2s 重试
-     *          （保证弱网环境下成功率 > 98%）
-     *  Step 5：parseResponse() 剥离 markdown fences，供前端 JSON.parse() 使用
-     *
-     * @param imageData    图片字节数组（通常是 MultipartFile.getBytes()）
-     * @param description  用户选填的描述（可空），拼在 user prompt 里让模型更聚焦
-     * @return             纯 JSON 字符串，含 score / analysis / suggestions 三字段
-     * @throws Exception   3 次重试全部失败时抛出 RuntimeException
+     * 全局 JVM 网络属性只需设置一次。
+     * 原实现在每次 AI 调用里都重复设置（每次调用两次全局 setProperty），既无意义也是全局副作用。
      */
-    public String analyzePhoto(byte[] imageData, String description) throws Exception {
+    @PostConstruct
+    void applyNetworkPreferences() {
         System.setProperty("java.net.preferIPv4Stack", "true");
         System.setProperty("java.net.preferIPv6Addresses", "false");
+    }
 
-        ChatModel chatModel = OpenAiChatModel.builder()
-                .apiKey(apiKey)
-                .modelName(vlModelName)
-                .baseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1")
-                .timeout(Duration.ofMillis(timeout))
-                .temperature(0.7)
-                .topP(0.8)
-                .maxTokens(4096)
-                .build();
+    /**
+     * 获取共享的 ChatModel；没有就创建（双重检查锁）。
+     * ----------------------------------------------------------------
+     * 刻意做成**延迟创建**而不是在 @PostConstruct 里建：
+     * api-key 缺失或配置错误时，问题应该暴露在调用处（能被消费者的兜底逻辑接住），
+     * 而不是让整个应用启动失败。这也是项目里 Redis/CacheService 的既有思路。
+     */
+    private ChatModel chatModel() {
+        ChatModel local = sharedChatModel;
+        if (local == null) {
+            synchronized (this) {
+                local = sharedChatModel;
+                if (local == null) {
+                    local = OpenAiChatModel.builder()
+                            .apiKey(apiKey)
+                            .modelName(vlModelName)
+                            .baseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1")
+                            .timeout(Duration.ofMillis(timeout))
+                            .temperature(0.7)
+                            .topP(0.8)
+                            .maxTokens(4096)
+                            .build();
+                    sharedChatModel = local;
+                    log.info("[ai] 已创建共享 ChatModel: model={}, timeout={}ms（整进程复用，不再每次调用重建连接）",
+                            vlModelName, timeout);
+                }
+            }
+        }
+        return local;
+    }
 
+    /**
+     * 照片 6 维度打分主方法（由照片打分消费者调用）
+     * ----------------------------------------------------------------
+     *  Step 1：buildSystemPrompt() → 严格要求模型按固定 JSON 结构返回
+     *          （6 维度评分 + 80-120 字评语 + suggestions 数组）
+     *  Step 2：图片转 Base64 → ImageContent.from("data:image/jpeg;base64,XXX") 多模态消息
+     *  Step 3：单次调用共享的 ChatModel（失败即抛，重试交给消息层的 RetryInterceptor）
+     *  Step 4：parseResponse() 剥离 markdown fences，供 JSON 反序列化使用
+     *
+     * @param imageData    图片字节数组（已压缩）
+     * @param description  用户选填的描述（可空），拼在 user prompt 里让模型更聚焦
+     * @return             纯 JSON 字符串，含 score / analysis / suggestions 三字段
+     * @throws Exception   调用失败时抛出，由消费者决定重试（抛给 MQ 层）还是降级
+     */
+    public String analyzePhoto(byte[] imageData, String description) throws Exception {
         String systemPrompt = buildSystemPrompt();
         String userPrompt = buildUserPrompt(description);
 
@@ -86,35 +118,22 @@ public class AIService {
 
         UserMessage userMessage = UserMessage.from(imageContent, textContent);
 
-        Exception lastException = null;
-        for (int retry = 1; retry <= MAX_RETRY; retry++) {
-            try {
-                log.info("调用LangChain4j OpenAI兼容模式分析照片，模型: {}, 图片大小: {} bytes, 重试次数: {}/{}",
-                        vlModelName, imageData.length, retry, MAX_RETRY);
+        try {
+            log.info("调用 Qwen-VL 分析照片，模型: {}, 图片大小: {} bytes", vlModelName, imageData.length);
 
-                ChatResponse response = chatModel.chat(List.of(
-                        SystemMessage.from(systemPrompt),
-                        userMessage
-                ));
+            ChatResponse response = chatModel().chat(List.of(
+                    SystemMessage.from(systemPrompt),
+                    userMessage
+            ));
 
-                String text = response.aiMessage().text();
-                log.info("LangChain4j返回结果: {}", text.length() > 500 ? text.substring(0, 500) + "..." : text);
+            String text = response.aiMessage().text();
+            log.info("Qwen-VL 返回结果: {}", text.length() > 500 ? text.substring(0, 500) + "..." : text);
 
-                return parseResponse(text);
-
-            } catch (Exception e) {
-                lastException = e;
-                log.error("LangChain4j调用失败(重试{}/{}): {}", retry, MAX_RETRY, e.getMessage());
-
-                if (retry < MAX_RETRY) {
-                    log.info("等待{}ms后重试...", RETRY_DELAY_MS);
-                    Thread.sleep(RETRY_DELAY_MS);
-                }
-            }
+            return parseResponse(text);
+        } catch (Exception e) {
+            log.error("Qwen-VL 调用失败: {}", e.getMessage());
+            throw new RuntimeException("AI分析失败: " + e.getMessage(), e);
         }
-
-        log.error("LangChain4j调用失败，已达到最大重试次数: {}", lastException.getMessage());
-        throw new RuntimeException("AI分析失败: " + lastException.getMessage(), lastException);
     }
 
     /**
@@ -190,53 +209,33 @@ public class AIService {
         return userPrompt.toString();
     }
 
+    /**
+     * 通用图片分析（由修图建议消费者调用，自定义 system/user prompt）。
+     * 与 analyzePhoto 同样是单次尝试、共享 ChatModel，重试交给消息层。
+     *
+     * @param base64Image 已压缩图片的 Base64（不含 data: 前缀）
+     */
     public String analyzeImage(String base64Image, String userPrompt, String systemPrompt) throws Exception {
-        System.setProperty("java.net.preferIPv4Stack", "true");
-        System.setProperty("java.net.preferIPv6Addresses", "false");
-
-        ChatModel chatModel = OpenAiChatModel.builder()
-                .apiKey(apiKey)
-                .modelName(vlModelName)
-                .baseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1")
-                .timeout(Duration.ofMillis(timeout))
-                .temperature(0.7)
-                .topP(0.8)
-                .maxTokens(4096)
-                .build();
-
         ImageContent imageContent = ImageContent.from("data:image/jpeg;base64," + base64Image);
         TextContent textContent = TextContent.from(userPrompt);
 
         UserMessage userMessage = UserMessage.from(imageContent, textContent);
 
-        Exception lastException = null;
-        for (int retry = 1; retry <= MAX_RETRY; retry++) {
-            try {
-                log.info("调用LangChain4j OpenAI兼容模式分析图片，模型: {}, 重试次数: {}/{}",
-                        vlModelName, retry, MAX_RETRY);
+        try {
+            log.info("调用 Qwen-VL 分析图片（修图建议），模型: {}", vlModelName);
 
-                ChatResponse response = chatModel.chat(List.of(
-                        SystemMessage.from(systemPrompt),
-                        userMessage
-                ));
+            ChatResponse response = chatModel().chat(List.of(
+                    SystemMessage.from(systemPrompt),
+                    userMessage
+            ));
 
-                String text = response.aiMessage().text();
-                log.info("LangChain4j返回结果: {}", text.length() > 500 ? text.substring(0, 500) + "..." : text);
+            String text = response.aiMessage().text();
+            log.info("Qwen-VL 返回结果: {}", text.length() > 500 ? text.substring(0, 500) + "..." : text);
 
-                return parseResponse(text);
-
-            } catch (Exception e) {
-                lastException = e;
-                log.error("LangChain4j调用失败(重试{}/{}): {}", retry, MAX_RETRY, e.getMessage());
-
-                if (retry < MAX_RETRY) {
-                    log.info("等待{}ms后重试...", RETRY_DELAY_MS);
-                    Thread.sleep(RETRY_DELAY_MS);
-                }
-            }
+            return parseResponse(text);
+        } catch (Exception e) {
+            log.error("Qwen-VL 调用失败（修图建议）: {}", e.getMessage());
+            throw new RuntimeException("AI分析失败: " + e.getMessage(), e);
         }
-
-        log.error("LangChain4j调用失败，已达到最大重试次数: {}", lastException.getMessage());
-        throw new RuntimeException("AI分析失败: " + lastException.getMessage(), lastException);
     }
 }

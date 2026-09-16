@@ -15,13 +15,16 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AppHeader from './components/Layout/AppHeader.vue'
 import AppSidebar from './components/Layout/AppSidebar.vue'
 import AppFooter from './components/Layout/AppFooter.vue'
+import { useUserStore } from './stores/user'
 
 const route = useRoute()
+const router = useRouter()
+const userStore = useUserStore()
 
 const isAuthLayout = computed(() => {
   return (
@@ -29,6 +32,21 @@ const isAuthLayout = computed(() => {
     route.name === 'login' || 
     route.name === 'register'
   )
+})
+
+// 打开项目时向后端校验本地 Token 的真实有效性
+// 后端重启/密钥变化后，localStorage 里残留的旧 Token 已失效，若仍按"有 Token 即已登录"
+// 显示，会出现"顶栏显示已登录，但调用需要登录的功能全部无权限"的错乱状态。
+// 校验不通过 → 清空登录态，顶栏回到"登录/注册"的未登录展示。
+onMounted(async () => {
+  if (!userStore.token) return
+  const valid = await userStore.validateSession()
+  if (!valid) {
+    userStore.logout()
+    if (route.meta.requiresAuth) {
+      router.push('/')
+    }
+  }
 })
 </script>
 
