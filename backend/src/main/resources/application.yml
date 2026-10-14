@@ -135,7 +135,7 @@ openai:
 qwen:
   api-key: ${QWEN_API_KEY:}
   model: qwen-turbo
-  vl-model: qwen-vl-plus
+  vl-model: qwen3-vl-plus
   timeout: 180000
 
 chroma:
