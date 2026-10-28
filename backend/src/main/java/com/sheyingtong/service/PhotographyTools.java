@@ -13,6 +13,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * Function Calling 工具集：6 个 @Tool 方法（查词典/器材搜索/预算器材/曝光计算/摄影技巧/曝光三角）。
+ *
+ * ⚠️ 工具参数名依赖编译期 -parameters（Spring Boot 父 pom 默认开启）。
+ *    一旦脱离该父 pom 或更换构建方式，参数名会被擦成 arg0，调用时报
+ *    「Required parameter "arg0" of tool "xxx" is missing」——6 个工具会同时失效。
+ *    所以这些方法不需要（也不建议）逐个写 @P 注解。
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j

@@ -134,7 +134,12 @@ openai:
 
 qwen:
   api-key: ${QWEN_API_KEY:}
-  model: qwen-turbo
+  # ⚠️ 默认模型是 qwen-plus，不是 qwen-turbo：
+  #   · 实测本账号 qwen-turbo 返回 429 limit_requests（配额/限流），qwen-turbo-latest 未开通
+  #   · qwen-plus / qwen-max 正常；流式 Function Calling 已在 qwen-plus 上验证通过
+  model: qwen-plus
+  # 图片链路（/message/image）用的 VL 模型，由 ChatService 的 visionAssistant 读取
+  # ⚠️ 实测：qwen-vl-plus / qwen-vl-max 已下线（Model not exist），qwen3-vl-plus 可用且支持真流式
   vl-model: qwen3-vl-plus
   timeout: 180000
 

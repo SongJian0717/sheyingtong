@@ -100,38 +100,56 @@ export const sendMessageStream = (sessionId, content, onChunk, onError) => {
     
     let fullResponse = ''
     let lastProcessedIndex = 0
-    
+    let settled = false
+
+    /**
+     * 收尾：服务端发来 [DONE] 就立刻结算并主动断开。
+     * ⚠️ 不能只靠 xhr.onload —— 实测 Vite dev 代理会吞掉上游的结束信号，
+     *    连接永不关闭，onload 永远不触发，UI 就会一直停在"AI正在思考"。
+     */
+    const finish = () => {
+      if (settled) return
+      settled = true
+      resolve(fullResponse)
+      try {
+        xhr.abort()
+      } catch (e) {
+        /* 已经结束，忽略 */
+      }
+    }
+
     xhr.onprogress = function() {
       const response = xhr.responseText
       const newContent = response.substring(lastProcessedIndex)
       lastProcessedIndex = response.length
-      
+
       const chunks = newContent.split('\n')
       for (const chunk of chunks) {
-        if (chunk.trim()) {
-          try {
-            const data = chunk.replace(/^data:\s*/, '')
-            if (data && data !== '[DONE]') {
-              fullResponse += data
-              onChunk && onChunk(data)
-            }
-          } catch (e) {
-            console.error('解析流式数据失败:', e)
-          }
+        if (!chunk.trim()) continue
+        const data = chunk.replace(/^data:\s*/, '')
+        if (data === '[DONE]') {
+          finish()
+          return
         }
+        fullResponse += data
+        onChunk && onChunk(data)
       }
     }
     
     xhr.onload = function() {
+      if (settled) return
       if (xhr.status === 401 || xhr.status === 403) {
+        settled = true
         onError && onError(xhr.status === 401 ? '登录已过期' : '权限不足')
         reject(new Error('HTTP ' + xhr.status))
         return
       }
-      resolve(fullResponse)
+      finish()
     }
     
     xhr.onerror = function() {
+      if (settled) return
+      settled = true
       onError && onError('网络错误')
       reject(new Error('网络错误'))
     }
@@ -175,37 +193,51 @@ export const sendMessageWithImage = (sessionId, content, file, onChunk) => {
     
     let fullResponse = ''
     let lastProcessedIndex = 0
-    
+    let settled = false
+
+    /** 同上：见到 [DONE] 立刻收尾，不依赖连接关闭 */
+    const finish = () => {
+      if (settled) return
+      settled = true
+      resolve(fullResponse)
+      try {
+        xhr.abort()
+      } catch (e) {
+        /* 已经结束，忽略 */
+      }
+    }
+
     xhr.onprogress = function() {
       const response = xhr.responseText
       const newContent = response.substring(lastProcessedIndex)
       lastProcessedIndex = response.length
-      
+
       const chunks = newContent.split('\n')
       for (const chunk of chunks) {
-        if (chunk.trim()) {
-          try {
-            const data = chunk.replace(/^data:\s*/, '')
-            if (data && data !== '[DONE]') {
-              fullResponse += data
-              onChunk && onChunk(data)
-            }
-          } catch (e) {
-            console.error('解析流式数据失败:', e)
-          }
+        if (!chunk.trim()) continue
+        const data = chunk.replace(/^data:\s*/, '')
+        if (data === '[DONE]') {
+          finish()
+          return
         }
+        fullResponse += data
+        onChunk && onChunk(data)
       }
     }
     
     xhr.onload = function() {
+      if (settled) return
       if (xhr.status === 401 || xhr.status === 403) {
+        settled = true
         reject(new Error('HTTP ' + xhr.status + (xhr.status === 401 ? ' 登录已过期' : ' 权限不足')))
         return
       }
-      resolve(fullResponse)
+      finish()
     }
     
     xhr.onerror = function() {
+      if (settled) return
+      settled = true
       reject(new Error('网络错误'))
     }
     

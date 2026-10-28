@@ -302,6 +302,11 @@ const sendMessageHandler = async () => {
  console.error('流式响应错误:', error);
  });
  }
+ // 兜底：只收到结束标记、没有正文时（例如模型侧报错），不要留一个空气泡
+ const answeredIndex = messages.value.findIndex(m => m.id === assistantMessageId);
+ if (answeredIndex !== -1 && !messages.value[answeredIndex].content.trim()) {
+ messages.value[answeredIndex].content = '抱歉，我现在无法回答您的问题，请稍后再试。';
+ }
  }
  catch (error) {
  const msgIndex = messages.value.findIndex(m => m.id === assistantMessageId);

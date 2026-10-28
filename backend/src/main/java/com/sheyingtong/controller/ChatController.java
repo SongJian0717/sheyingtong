@@ -155,8 +155,9 @@ public class ChatController {
      *  - 返回 reactor Flux<String>，每个 emit 的 token 作为一个 SSE chunk 推到前端
      *  - 前端用 XMLHttpRequest onprogress 逐字解析（chat.js sendMessageStream）
      * 注意：
-     *  - 流式接口不使用 PhotographyAssistant（Function Calling 不支持 streaming）
-     *    而是直接调用 StreamingChatModel，不走工具调用/Redis记忆/RAG链路
+     *  - 流式链路走 ChatService.assistant.chatStream()：与同步接口共用同一个 AiServices 实例，
+     *    工具调用 / Redis 记忆 / RAG 召回完全一致
+     *    （真机验证：qwen 的 OpenAI 兼容流式接口会返回 tool_calls，框架能正确执行 @Tool 并回灌结果）
      *  - 空消息直接返回 Flux.error IllegalArgumentException，由统一异常处理映射成 400
      */
     @Operation(summary = "发送消息（SSE流式打字机）", description = "流式返回AI回复token，实现打字机效果。Content-Type: text/event-stream，返回Flux<SSE chunk>。【需登录】")
@@ -193,9 +194,10 @@ public class ChatController {
      * 参数：
      *  - content：文字提问（RequestParam 表单字段）
      *  - image：MultipartFile 二进制图片（浏览器端 new FormData append("image", file)）
-     * 实现：ChatService.sendMessageWithImage() 内部使用 Qwen-VL-Plus 多模态模型
+     * 实现：ChatService.sendMessageWithImage() 内部用 visionAssistant（qwen3-vl-plus，真流式），
+     *       记忆与文字链路共享，但写入前剥离图片（历史只留文字）
      */
-    @Operation(summary = "多模态图片问答（SSE流式）", description = "上传一张图片 + 文字提问，AI基于图片内容进行分析回复（FormData表单提交）。使用Qwen-VL-Flash多模态模型。【需登录】")
+    @Operation(summary = "多模态图片问答（SSE流式）", description = "上传一张图片 + 文字提问，AI基于图片内容进行分析回复（FormData表单提交）。使用qwen3-vl-plus多模态模型。【需登录】")
     @PostMapping(value = "/session/{sessionId}/message/image", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> sendMessageWithImage(Principal principal,
                                              @Parameter(description = "会话ID", required = true)
