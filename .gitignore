@@ -54,6 +54,9 @@ ENV/
 # ---------- 运行时数据：最关键！隐私/个人数据绝不要传 ----------
 # 用户上传的头像与照片（绝对不要开源！）
 backend/uploads/
+# docker compose 在仓库根目录挂的 ./uploads（容器内 /app/uploads）
+# 少了这一行，部署机上 git add -A 会把用户图片提交进库
+uploads/
 
 # ChromaDB 向量数据库 sqlite3 + 索引 bin 文件
 chroma-data/
