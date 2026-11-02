@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * ChatMemory 装饰器：在读取侧按"链路"清洗会话记忆。文字链路与图片链路各自包一层，共用同一份底层记忆。
@@ -40,6 +41,12 @@ import java.util.Map;
  *          追问轮没有新图，实际就是 keepImages 张。
  *
  * 代价：被裁剪的历史图不再重放，只保留文字占位；当前提问的图片不受影响（由 AiServices 拼进当轮 UserMessage）。
+ *
+ *  ③ 拼上"较早对话摘要"（可选，由 {@code summarySupplier} 提供）
+ *     记忆被裁剪（条数或 token 超预算）时，RedisChatMemoryStore 会把丢掉的那段交给 ChatSummaryService
+ *     压成 150~300 字摘要，存在 sheyingtong:chat:summary:{sessionId}。
+ *     这里把它拼到 system prompt 最前面 —— 只发一份 system，比额外插一条 SystemMessage 更稳，
+ *     也让"已经被丢掉的早期内容"以极低成本继续可用。
  */
 public class SanitizingChatMemory implements ChatMemory {
 
@@ -51,14 +58,25 @@ public class SanitizingChatMemory implements ChatMemory {
 
     private static final String IMAGE_PLACEHOLDER = "[图片：这轮对话曾上传过一张图片，此处只保留文字记录]";
 
+    /** 较早对话摘要放在 system prompt 最前面的前缀 */
+    private static final String SUMMARY_PREFIX = "[较早对话的摘要，请据此保持前后连贯；若与最近消息冲突，以最近消息为准]\n";
+
     private final ChatMemory delegate;
     private final ImagePolicy imagePolicy;
     private final int keepImages;
+    /** 读"较早对话摘要"；为 null 或返回空表示没有摘要 */
+    private final Supplier<String> summarySupplier;
 
     public SanitizingChatMemory(ChatMemory delegate, ImagePolicy imagePolicy, int keepImages) {
+        this(delegate, imagePolicy, keepImages, null);
+    }
+
+    public SanitizingChatMemory(ChatMemory delegate, ImagePolicy imagePolicy, int keepImages,
+                                Supplier<String> summarySupplier) {
         this.delegate = delegate;
         this.imagePolicy = imagePolicy;
         this.keepImages = keepImages;
+        this.summarySupplier = summarySupplier;
     }
 
     @Override
@@ -75,6 +93,8 @@ public class SanitizingChatMemory implements ChatMemory {
     @Override
     public List<ChatMessage> messages() {
         List<ChatMessage> stored = delegate.messages();
+        String summary = (summarySupplier == null) ? null : summarySupplier.get();
+        boolean hasSummary = summary != null && !summary.isBlank();
 
         int lastSystemIndex = -1;
         for (int i = 0; i < stored.size(); i++) {
@@ -85,16 +105,27 @@ public class SanitizingChatMemory implements ChatMemory {
 
         Map<Integer, Integer> keepPerMessage = planImageRetention(stored);
 
-        List<ChatMessage> sanitized = new ArrayList<>(stored.size());
+        List<ChatMessage> sanitized = new ArrayList<>(stored.size() + 1);
+        boolean systemAdded = false;
         for (int i = 0; i < stored.size(); i++) {
             ChatMessage message = stored.get(i);
             if (message instanceof SystemMessage) {
                 if (i == lastSystemIndex) {
-                    sanitized.add(message);
+                    // ③ 把"较早对话摘要"拼到 system prompt 最前面：只有一份 system，
+                    //    比额外插一条 SystemMessage 更稳（部分兼容层对多 system 处理不一致）
+                    sanitized.add(hasSummary
+                            ? SystemMessage.from(SUMMARY_PREFIX + summary + "\n\n" + ((SystemMessage) message).text())
+                            : message);
+                    systemAdded = true;
                 }
                 continue;
             }
             sanitized.add(applyImagePolicy(message, keepPerMessage.getOrDefault(i, 0)));
+        }
+
+        // 极端情况（记忆里没有 system prompt）也要让摘要送到
+        if (!systemAdded && hasSummary) {
+            sanitized.add(0, SystemMessage.from(SUMMARY_PREFIX + summary));
         }
         return sanitized;
     }

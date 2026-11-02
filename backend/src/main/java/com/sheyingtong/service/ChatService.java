@@ -163,7 +163,8 @@ public class ChatService {
                 .tools(photographyTools)
                 .chatMemoryProvider(sessionId -> new SanitizingChatMemory(
                         redisChatMemoryStore.getChatMemory(sessionId),
-                        SanitizingChatMemory.ImagePolicy.TEXT_ONLY, 0))
+                        SanitizingChatMemory.ImagePolicy.TEXT_ONLY, 0,
+                        () -> redisChatMemoryStore.getSummary(sessionId)))
                 .contentRetriever(ragContentRetriever)
                 .build();
 
@@ -197,7 +198,8 @@ public class ChatService {
                 .streamingChatModel(vlStreamingModel)
                 .chatMemoryProvider(sessionId -> new SanitizingChatMemory(
                         redisChatMemoryStore.getChatMemory(sessionId),
-                        SanitizingChatMemory.ImagePolicy.KEEP_RECENT, KEEP_IMAGES))
+                        SanitizingChatMemory.ImagePolicy.KEEP_RECENT, KEEP_IMAGES,
+                        () -> redisChatMemoryStore.getSummary(sessionId)))
                 .build();
 
         log.info("视觉助手初始化完成：VL 模型 = {}，读取侧保留最近 {} 张图，带图会话的文字追问窗口 = {} 条消息",
